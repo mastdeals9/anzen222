@@ -9,6 +9,7 @@
  *   - PIB (pib_import) is completely separate from the Import/Customs Broker invoice.
  *   - All amounts in IDR; no currency conversion here.
  */
+import { normalizeExpenseBankLinks } from './expenseBankLinks.ts';
 
 // ---------------------------------------------------------------------------
 // Document Type definitions
@@ -689,6 +690,9 @@ export interface ExpenseReconciliationInput extends ExpenseTotalsInput, BrokerEx
   approval_status?: string | null;
   effective_posting_state?: string | null;
   bank_statement_lines?: Array<{
+    id?: string | null;
+    raw_line_id?: string | null;
+    allocation_id?: string | null;
     allocation_amount?: number | null;
     debit_amount?: number | null;
     credit_amount?: number | null;
@@ -725,7 +729,12 @@ export function calculateExpenseReconciliation(
   expense: ExpenseReconciliationInput,
   additionalAdvanceApplications?: Array<{ applied_amount?: number | null }> | null,
 ): ExpenseReconciliationResult {
-  const reconciledAmount = (expense.bank_statement_lines || []).reduce(
+  const inputLines = (expense.bank_statement_lines || []).map((line, index) => ({
+    ...line,
+    id: line.id || line.raw_line_id || `bsl-${index}`,
+  }));
+  const normalizedLines = normalizeExpenseBankLinks(inputLines);
+  const reconciledAmount = normalizedLines.reduce(
     (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
     0,
   );
@@ -777,14 +786,14 @@ export function calculateExpenseReconciliation(
     statusLabel = 'Cancelled';
   } else if (expense.payment_method === 'cash') {
     statusLabel = 'Petty Cash';
+  } else if (isFullyReconciled) {
+    statusLabel = 'Paid / Reconciled';
   } else if (paymentStatus === 'Outstanding') {
-    statusLabel = 'Outstanding';
+    statusLabel = isPartiallyReconciled ? 'Partially Paid / Reconciled' : 'Outstanding';
   } else if (paymentStatus === 'Partially Paid') {
     statusLabel = (isPartiallyReconciled || isFullyReconciled)
       ? 'Partially Paid / Reconciled'
       : 'Partially Paid / Reconciliation Pending';
-  } else if (isFullyReconciled) {
-    statusLabel = 'Paid / Reconciled';
   } else {
     statusLabel = 'Paid / Reconciliation Pending';
   }
