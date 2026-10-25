@@ -2619,8 +2619,9 @@ export function ExpenseManager({
       if (isCancelled || isCash || isReconciled || !isPaid) return false;
     } else if (reconFilter === 'outstanding') {
       const isCancelled = exp.approval_status === 'cancelled';
+      const recon = calculateExpenseReconciliation(exp);
       const billBalance = calculateCanonicalCashPayable(exp) - (exp.paid_amount ?? 0);
-      const isOutstanding = billBalance > 0.01 && (exp.paid_amount ?? 0) <= 0.01;
+      const isOutstanding = billBalance > 0.01 && (exp.paid_amount ?? 0) <= 0.01 && !recon.isFullyReconciled;
       if (isCancelled || !isOutstanding) return false;
     }
 
@@ -2683,10 +2684,10 @@ export function ExpenseManager({
     if (exp.payment_method === 'cash') return 5;
     const isPaid = (exp.paid_amount ?? 0) >= (calculateCanonicalCashPayable(exp) - 0.01);
     const isPartiallyPaid = (exp.paid_amount ?? 0) > 0.01 && !isPaid;
-    if (!isPaid && !isPartiallyPaid) return 2; // Approved but Outstanding
-    if (isPartiallyPaid) return 2.5; // Partially Paid
-    if (!isReconciled) return 3; // Paid but Pending Bank Reconciliation
-    return 4; // Paid & Reconciled
+    if (isReconciled) return 4; // Paid & Reconciled
+    if (recon.isPartiallyReconciled || isPartiallyPaid) return 2.5; // Partially Paid / Reconciled
+    if (!isPaid) return 2; // Approved but Outstanding
+    return 3; // Paid but Pending Bank Reconciliation
   }, []);
 
   const sortedExpenses = useMemo(() => [...filteredExpenses].sort((a, b) => {
@@ -3472,42 +3473,6 @@ export function ExpenseManager({
                             </span>
                           );
                         }
-                        const billBalance = calculateCanonicalCashPayable(expense) - (expense.paid_amount ?? 0);
-                        const isPartiallyPaid = (expense.paid_amount ?? 0) > 0.01 && billBalance > 0.01;
-                        const isFullyPaid = billBalance <= 0.01;
-                        const isPaidAny = isFullyPaid || isPartiallyPaid;
-
-                        if (!isPaidAny) {
-                          return (
-                            <span
-                              className="text-gray-400 text-[11px] font-semibold"
-                              title="Outstanding"
-                            >
-                              —
-                            </span>
-                          );
-                        }
-                        if (isPartiallyPaid) {
-                          if (isPartiallyReconciled || isReconciled) {
-                            return (
-                              <span
-                                className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-yellow-100 text-yellow-700"
-                                title="Partially Paid / Reconciled"
-                              >
-                                <Link2 className="w-3 h-3" />
-                              </span>
-                            );
-                          }
-                          return (
-                            <span
-                              className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700"
-                              title="Partially Paid / Reconciliation Pending"
-                            >
-                              <Clock className="w-3 h-3" />
-                            </span>
-                          );
-                        }
-                        // Fully Paid
                         if (isReconciled) {
                           return (
                             <span
@@ -3518,12 +3483,46 @@ export function ExpenseManager({
                             </span>
                           );
                         }
+                        if (isPartiallyReconciled) {
+                          return (
+                            <span
+                              className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-yellow-100 text-yellow-700"
+                              title="Partially Paid / Reconciled"
+                            >
+                              <Link2 className="w-3 h-3" />
+                            </span>
+                          );
+                        }
+                        const billBalance = calculateCanonicalCashPayable(expense) - (expense.paid_amount ?? 0);
+                        const isPartiallyPaid = (expense.paid_amount ?? 0) > 0.01 && billBalance > 0.01;
+                        const isFullyPaid = billBalance <= 0.01;
+
+                        if (isPartiallyPaid) {
+                          return (
+                            <span
+                              className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700"
+                              title="Partially Paid / Reconciliation Pending"
+                            >
+                              <Clock className="w-3 h-3" />
+                            </span>
+                          );
+                        }
+                        if (isFullyPaid) {
+                          return (
+                            <span
+                              className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700"
+                              title="Paid / Reconciliation Pending"
+                            >
+                              <Clock className="w-3 h-3" />
+                            </span>
+                          );
+                        }
                         return (
                           <span
-                            className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700"
-                            title="Paid / Reconciliation Pending"
+                            className="text-gray-400 text-[11px] font-semibold"
+                            title="Outstanding"
                           >
-                            <Clock className="w-3 h-3" />
+                            —
                           </span>
                         );
                       })()}
