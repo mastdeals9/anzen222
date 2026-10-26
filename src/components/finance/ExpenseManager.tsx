@@ -15,6 +15,7 @@ import {
   approveFinanceExpense,
   editApprovedFinanceExpense,
   getReportingUsdRate,
+  linkBankStatementLine,
   saveFinanceExpense,
   unlinkBankStatementAllocation,
   unlinkFinanceExpenseBankLink,
@@ -1834,15 +1835,81 @@ export function ExpenseManager({
         if (selectedBankTransactionId) {
           const { data: lineCheck, error: checkErr } = await supabase
             .from('bank_statement_lines')
-            .select('id, matched_expense_id, matching_status')
+            .select('id, matched_expense_id, matching_status, debit_amount, credit_amount')
             .eq('id', selectedBankTransactionId)
             .single();
           if (checkErr) throw checkErr;
           if (lineCheck?.matched_expense_id) {
-            if (inFlightExpenseIdRef.current && lineCheck.matched_expense_id === inFlightExpenseIdRef.current) {
-              // Retry of same operation after network timeout
+            const existingExpId = lineCheck.matched_expense_id;
+
+            // Check if this existing expense already has canonical allocations on this line
+            const { data: existingAllocations } = await supabase
+              .from('bank_statement_allocations')
+              .select('id, allocation_amount')
+              .eq('bank_statement_line_id', selectedBankTransactionId)
+              .eq('document_id', existingExpId);
+
+            const hasCanonicalAllocation = Boolean(existingAllocations && existingAllocations.length > 0);
+
+            if (!hasCanonicalAllocation) {
+              // Existing expense exists (e.g. EXP/26/306) but lacks canonical allocation!
+              // Requirement: Link that existing expense instead of creating a duplicate.
+              console.log(`Linking existing expense ${existingExpId} to statement line ${selectedBankTransactionId}`);
+
+              if (isAdmin) {
+                try {
+                  await approveFinanceExpense(existingExpId, profile?.id || user.id);
+                } catch (approveErr: any) {
+                  console.warn('Approve existing expense notice:', approveErr?.message || approveErr);
+                }
+              }
+
+              const lineAmount = Number(lineCheck.debit_amount || lineCheck.credit_amount || 0);
+              const allocAmt = selectedBankAllocationAmount && selectedBankAllocationAmount > 0.01
+                ? selectedBankAllocationAmount
+                : (lineAmount > 0 ? lineAmount : undefined);
+
+              try {
+                await linkBankStatementLine(selectedBankTransactionId, 'expense', existingExpId, 'supplier', allocAmt);
+                await syncExpenseBankLinks([existingExpId]);
+                setReconciledExpenseIds(prev => new Set(prev).add(existingExpId));
+                notifyFinanceReconciliationRefresh();
+
+                const { data: fetchedExp } = await supabase
+                  .from('finance_expenses')
+                  .select('*')
+                  .eq('id', existingExpId)
+                  .single();
+
+                if (fetchedExp) {
+                  setExpenses(prev => {
+                    const idx = prev.findIndex(e => e.id === existingExpId);
+                    if (idx >= 0) {
+                      const updated = [...prev];
+                      updated[idx] = { ...updated[idx], ...fetchedExp };
+                      return updated;
+                    }
+                    return [fetchedExp, ...prev];
+                  });
+                  onExpenseSavedFromBankReconciliation?.(fetchedExp as FinanceExpense, selectedBankTransactionId);
+                }
+
+                if (!embeddedModalOnly) {
+                  alert(`Linked bank transaction to existing expense (${fetchedExp?.voucher_number || existingExpId}) without creating a duplicate.`);
+                }
+                setModalOpen(false);
+                resetForm();
+                return;
+              } catch (linkError: any) {
+                console.error('Failed to link existing expense:', linkError);
+                throw new Error(`Failed to link existing expense (${existingExpId}): ${linkError?.message || linkError}`);
+              }
             } else {
-              throw new Error(`This bank statement line is already linked to an expense (ID: ${lineCheck.matched_expense_id}).`);
+              if (inFlightExpenseIdRef.current && lineCheck.matched_expense_id === inFlightExpenseIdRef.current) {
+                // Retry of same operation after network timeout
+              } else {
+                throw new Error(`This bank statement line is already linked to an expense (ID: ${lineCheck.matched_expense_id}).`);
+              }
             }
           }
         }
@@ -1866,10 +1933,14 @@ export function ExpenseManager({
         }
 
         if (selectedBankTransactionId && newExpenseId) {
-          await supabase
-            .from('finance_expenses')
-            .update({ originating_bank_statement_line_id: selectedBankTransactionId })
-            .eq('id', newExpenseId);
+          try {
+            await supabase
+              .from('finance_expenses')
+              .update({ originating_bank_statement_line_id: selectedBankTransactionId })
+              .eq('id', newExpenseId);
+          } catch {
+            // Safe fallback if column is not present in local schema
+          }
         }
 
         // For authorized administrators, approve and post directly via existing authorized server pipeline
@@ -1917,19 +1988,36 @@ export function ExpenseManager({
         const finalExpense = newExpense;
 
         if (selectedBankTransactionId && newExpense) {
-          const { error: linkErr } = await supabase
-            .from('bank_statement_lines')
-            .update({
-              matched_expense_id: newExpense.id,
-              matching_status: 'suggested',
-            })
-            .eq('id', selectedBankTransactionId);
-          if (linkErr) {
-            console.error('Error linking bank statement line to expense:', linkErr);
+          const isApproved = isAdmin || (newExpense.approval_status === 'approved');
+          if (isApproved) {
+            try {
+              const lineAmt = Number(newExpense.amount || formData.amount || 0);
+              const allocAmt = selectedBankAllocationAmount && selectedBankAllocationAmount > 0.01
+                ? selectedBankAllocationAmount
+                : (lineAmt > 0 ? lineAmt : undefined);
+
+              await linkBankStatementLine(selectedBankTransactionId, 'expense', newExpense.id, 'supplier', allocAmt);
+              await syncExpenseBankLinks([newExpense.id]);
+              setReconciledExpenseIds(prev => new Set(prev).add(newExpense.id));
+              notifyFinanceReconciliationRefresh();
+            } catch (linkErr: any) {
+              console.error('Error linking bank statement line to expense:', linkErr);
+              alert(`⚠️ Expense was created successfully (${newExpense.voucher_number || newExpense.id}), but automatic bank reconciliation linking could not be completed: ${linkErr?.message || linkErr}.\n\nYou can link this expense manually from the Bank Reconciliation screen.`);
+            }
+          } else {
+            const { error: linkErr } = await supabase
+              .from('bank_statement_lines')
+              .update({
+                matched_expense_id: newExpense.id,
+                matching_status: 'suggested',
+              })
+              .eq('id', selectedBankTransactionId);
+            if (linkErr) {
+              console.error('Error linking bank statement line to expense:', linkErr);
+            }
+            await syncExpenseBankLinks([newExpense.id]);
+            notifyFinanceReconciliationRefresh();
           }
-          await syncExpenseBankLinks([newExpense.id]);
-          setReconciledExpenseIds(prev => new Set(prev).add(newExpense.id));
-          notifyFinanceReconciliationRefresh();
           onExpenseSavedFromBankReconciliation?.(newExpense as FinanceExpense, selectedBankTransactionId);
         }
 
@@ -2138,6 +2226,34 @@ export function ExpenseManager({
     setApprovalLoading(id);
     try {
       await approveFinanceExpense(id, profile?.id);
+
+      // Auto-reconcile linked bank statement line if present and not yet allocated
+      try {
+        const { data: linkedLines } = await supabase
+          .from('bank_statement_lines')
+          .select('id, debit_amount, credit_amount')
+          .eq('matched_expense_id', id);
+
+        if (linkedLines && linkedLines.length > 0) {
+          for (const line of linkedLines) {
+            const { data: existingAlloc } = await supabase
+              .from('bank_statement_allocations')
+              .select('id')
+              .eq('bank_statement_line_id', line.id)
+              .eq('document_id', id);
+
+            if (!existingAlloc || existingAlloc.length === 0) {
+              const lineAmt = Number(line.debit_amount || line.credit_amount || 0);
+              const expObj = expenses.find(e => e.id === id);
+              const allocAmt = expObj ? Math.min(lineAmt, calculateCanonicalCashPayable(expObj)) : lineAmt;
+              await linkBankStatementLine(line.id, 'expense', id, 'supplier', allocAmt > 0.01 ? allocAmt : undefined);
+            }
+          }
+        }
+      } catch (autoLinkErr) {
+        console.error('Error auto-linking bank line on expense approval:', autoLinkErr);
+      }
+
       await syncExpenseBankLinks([id]);
       notifyFinanceReconciliationRefresh();
       const lifecycle = await getEffectiveExpensePostingState(id);
