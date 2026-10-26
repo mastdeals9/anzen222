@@ -16,12 +16,20 @@ import { BankTransactionLinkField } from './BankTransactionLinkField';
 import { FinanceActionButton, FinanceBadge } from './FinanceUI';
 import {
   type BankTransactionLine,
+  FINANCE_RECONCILIATION_REFRESH_EVENT,
   linkBankTransaction,
   notifyFinanceReconciliationRefresh,
   unlinkBankTransaction,
 } from './bankTransactionLinking';
 import { FinanceDocumentAttachments, uploadFinanceDocuments } from './FinanceDocumentAttachments';
 import { useFinance } from '../../contexts/FinanceContext';
+import { VoucherBankLinkIndicator } from './VoucherBankLinkIndicator';
+import {
+  evaluateVoucherBankLink,
+  type VoucherBankLinkEvaluation,
+  type CanonicalAllocationDetail,
+  type LegacyLinkDetail,
+} from '../../utils/voucherBankLinks';
 
 const VOUCHER_INPUT = 'w-full h-9 px-2.5 text-xs border border-gray-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-colors disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed';
 const VOUCHER_LABEL = 'block text-[11px] font-semibold text-gray-600 uppercase tracking-wider mb-1';
@@ -93,8 +101,9 @@ interface PaymentVoucher {
   is_posted: boolean;
   journal_entry_id: string | null;
   bank_statement_line_id?: string | null;
-  bank_link_status?: 'linked' | 'partial' | 'unlinked' | 'unknown';
+  bank_link_status?: 'linked' | 'partial' | 'unlinked' | 'needs_review' | 'unknown';
   bank_linked_amount?: number;
+  bank_link_evaluation?: VoucherBankLinkEvaluation;
   bank_statement_line?: BankTransactionLine | null;
   bank_statement_lines?: BankTransactionLine[];
   suppliers?: { company_name: string };
@@ -140,6 +149,7 @@ interface PaymentVoucherManagerProps {
   } | null;
   onBankReconciliationPrefillConsumed?: () => void;
   onPaymentSavedFromBankReconciliation?: (voucherId: string, statementLineId: string) => void;
+  onOpenBankReconciliation?: (bankAccountId?: string, statementLineId?: string) => void;
   embeddedModalOnly?: boolean;
   onCloseEmbedded?: () => void;
 }
@@ -227,6 +237,7 @@ export function PaymentVoucherManager({
   prefillFromBankReconciliation,
   onBankReconciliationPrefillConsumed,
   onPaymentSavedFromBankReconciliation,
+  onOpenBankReconciliation,
   embeddedModalOnly,
   onCloseEmbedded,
 }: PaymentVoucherManagerProps) {
@@ -292,6 +303,14 @@ export function PaymentVoucherManager({
   useEffect(() => {
     loadVouchers();
   }, [dateRange.startDate, dateRange.endDate]);
+
+  useEffect(() => {
+    const handleReconRefresh = () => {
+      void loadVouchers();
+    };
+    window.addEventListener(FINANCE_RECONCILIATION_REFRESH_EVENT, handleReconRefresh);
+    return () => window.removeEventListener(FINANCE_RECONCILIATION_REFRESH_EVENT, handleReconRefresh);
+  }, []);
 
   useEffect(() => {
     loadSuppliers();
@@ -495,6 +514,9 @@ export function PaymentVoucherManager({
         }
       }
 
+      const legacyByJournalMap = new Map<string, LegacyLinkDetail[]>();
+      const legacyByPaymentMap = new Map<string, LegacyLinkDetail[]>();
+
       if (journalEntryIds.length > 0) {
         const { data: bankLines, error: bankLineError } = await supabase
           .from('bank_statement_lines')
@@ -507,26 +529,90 @@ export function PaymentVoucherManager({
             credit_amount,
             bank_account_id,
             matched_entry_id,
+            manually_unlinked,
             bank_accounts(bank_name, account_name, account_number, alias, currency)
           `)
           .in('matched_entry_id', journalEntryIds);
         if (bankLineError) throw bankLineError;
-        for (const line of (bankLines || []) as unknown as BankTransactionLine[]) {
-          if (line.matched_entry_id) bankLineMap.set(line.matched_entry_id, line);
+        for (const line of (bankLines || []) as unknown as any[]) {
+          if (line.matched_entry_id) {
+            bankLineMap.set(line.matched_entry_id, line);
+            const list = legacyByJournalMap.get(line.matched_entry_id) || [];
+            list.push({
+              bank_statement_line_id: line.id,
+              debit_amount: line.debit_amount,
+              credit_amount: line.credit_amount,
+              transaction_date: line.transaction_date,
+              description: line.description,
+              reference: line.reference,
+              bank_account_id: line.bank_account_id,
+              manually_unlinked: line.manually_unlinked,
+            });
+            legacyByJournalMap.set(line.matched_entry_id, list);
+          }
+        }
+      }
+
+      if (voucherIds.length > 0) {
+        const { data: directPaymentLines } = await supabase
+          .from('bank_statement_lines')
+          .select(`
+            id,
+            transaction_date,
+            description,
+            reference,
+            debit_amount,
+            credit_amount,
+            bank_account_id,
+            matched_payment_id,
+            manually_unlinked
+          `)
+          .in('matched_payment_id', voucherIds);
+        for (const line of (directPaymentLines || []) as unknown as any[]) {
+          if (line.matched_payment_id) {
+            const list = legacyByPaymentMap.get(line.matched_payment_id) || [];
+            list.push({
+              bank_statement_line_id: line.id,
+              debit_amount: line.debit_amount,
+              credit_amount: line.credit_amount,
+              transaction_date: line.transaction_date,
+              description: line.description,
+              reference: line.reference,
+              bank_account_id: line.bank_account_id,
+              manually_unlinked: line.manually_unlinked,
+            });
+            legacyByPaymentMap.set(line.matched_payment_id, list);
+          }
         }
       }
 
       // Canonical bank allocations are authoritative and support one bank
       // event settling many vouchers/documents. Legacy journal links remain a
-      // compatibility fallback only, avoiding double counting.
-      const canonicalAmounts = new Map<string, number>();
+      // compatibility fallback checked for conflicts.
+      const canonicalAllocationsByVoucher = new Map<string, CanonicalAllocationDetail[]>();
       let linkStatusFailed = false;
 
       if (voucherIds.length > 0) {
         try {
           const { data: canonicalBankAllocations, error: canonicalBankError } = await supabase
             .from('bank_statement_allocations')
-            .select('document_id, allocation_amount, bank_statement_lines(id, transaction_date, description, reference, debit_amount, credit_amount, bank_account_id, bank_accounts(bank_name, account_name, account_number, alias, currency))')
+            .select(`
+              id,
+              document_id,
+              document_type,
+              allocation_amount,
+              bank_statement_line_id,
+              bank_statement_lines (
+                id,
+                transaction_date,
+                description,
+                reference,
+                debit_amount,
+                credit_amount,
+                bank_account_id,
+                bank_accounts(bank_name, account_name, account_number, alias, currency)
+              )
+            `)
             .eq('document_type', 'payment')
             .in('document_id', voucherIds);
           if (canonicalBankError) throw canonicalBankError;
@@ -540,10 +626,16 @@ export function PaymentVoucherManager({
               bankLinesByPaymentId.set(allocation.document_id, lines);
             }
             if (allocation.document_id) {
-              canonicalAmounts.set(
-                allocation.document_id,
-                (canonicalAmounts.get(allocation.document_id) || 0) + Number(allocation.allocation_amount || 0),
-              );
+              const allocList = canonicalAllocationsByVoucher.get(allocation.document_id) || [];
+              allocList.push({
+                id: allocation.id,
+                bank_statement_line_id: line?.id || allocation.bank_statement_line_id,
+                allocation_amount: Number(allocation.allocation_amount || 0),
+                document_id: allocation.document_id,
+                document_type: 'payment',
+                bank_statement_lines: line || null,
+              });
+              canonicalAllocationsByVoucher.set(allocation.document_id, allocList);
             }
           }
         } catch (linkError) {
@@ -563,27 +655,28 @@ export function PaymentVoucherManager({
           : (legacyBankLine ? [legacyBankLine] : []);
         const bankLine = bankLinesForVoucher[0] || null;
 
-        const canonicalAmount = canonicalAmounts.get(v.id) || 0;
-        const legacyAmount = Number(legacyBankLine?.debit_amount || legacyBankLine?.credit_amount || 0);
-        // Prefer canonical allocations; only fall back to legacy journal matches when no canonical allocation exists
-        const linkedAmount = canonicalAmount > 0.01 ? canonicalAmount : legacyAmount;
-
         const debitRequired = v.payment_purpose === 'salary_advance_settlement'
           ? 0
           : (isCross ? (v.bank_amount || 0) : (v.amount || 0) + (v.bank_charge || 0));
 
-        let bankLinkStatus: 'linked' | 'partial' | 'unlinked' | 'unknown' = 'unlinked';
-        if (linkStatusFailed) {
-          bankLinkStatus = 'unknown';
-        } else if (v.payment_purpose === 'salary_advance_settlement') {
-          bankLinkStatus = 'unlinked';
-        } else if (debitRequired > 0.01 && linkedAmount >= debitRequired - 0.01) {
-          bankLinkStatus = 'linked';
-        } else if (linkedAmount > 0.01) {
-          bankLinkStatus = 'partial';
-        } else {
-          bankLinkStatus = 'unlinked';
+        const canonicalList = canonicalAllocationsByVoucher.get(v.id) || [];
+        const legacyList: LegacyLinkDetail[] = [
+          ...(legacyByPaymentMap.get(v.id) || []),
+          ...(v.journal_entry_id ? (legacyByJournalMap.get(v.journal_entry_id) || []) : []),
+        ];
+        const uniqueLegacyMap = new Map<string, LegacyLinkDetail>();
+        for (const l of legacyList) {
+          uniqueLegacyMap.set(l.bank_statement_line_id, l);
         }
+
+        const evaluation = evaluateVoucherBankLink({
+          expectedAmount: debitRequired,
+          canonicalAllocations: canonicalList,
+          legacyLinks: Array.from(uniqueLegacyMap.values()),
+          currency: bankCcy,
+          isInternalSettlement: v.payment_purpose === 'salary_advance_settlement',
+          isCash: v.payment_method === 'cash',
+        });
 
         return {
           ...v,
@@ -593,8 +686,9 @@ export function PaymentVoucherManager({
           bank_statement_line_id: bankLine?.id || null,
           bank_statement_line: bankLine,
           bank_statement_lines: bankLinesForVoucher,
-          bank_link_status: bankLinkStatus,
-          bank_linked_amount: linkedAmount,
+          bank_link_status: (linkStatusFailed ? 'unknown' : evaluation.status) as PaymentVoucher['bank_link_status'],
+          bank_linked_amount: evaluation.canonicalAmount,
+          bank_link_evaluation: evaluation,
         };
       });
       setVouchers(enriched);
@@ -1495,41 +1589,23 @@ export function PaymentVoucherManager({
               ? <span className="text-gray-500 text-[10px]">Salary deduction</span>
               : <span className="font-medium text-red-600">{fmt(v.net_amount, v.invoice_currency || 'IDR')}</span> },
             {
+              header: 'Bank Link',
+              align: 'center' as const,
+              cell: (v: PaymentVoucher) => (
+                <VoucherBankLinkIndicator
+                  voucherNumber={v.voucher_number}
+                  evaluation={v.bank_link_evaluation}
+                  bankAccountId={v.bank_account_id}
+                  onOpenBankReconciliation={onOpenBankReconciliation}
+                />
+              ),
+            },
+            {
               header: 'Actions',
               align: 'center' as const,
               cell: (v: PaymentVoucher) => {
-                const bankCcy = v.bank_accounts?.currency || v.payment_currency || 'IDR';
-                const invCcy = v.invoice_currency || 'IDR';
-                const isCross = invCcy !== bankCcy && v.bank_amount != null && v.bank_amount > 0;
-                const debit = isCross ? (v.bank_amount || 0) : (v.amount || 0) + (v.bank_charge || 0);
-
                 return (
                   <div className="flex items-center justify-center gap-0.5 whitespace-nowrap">
-                    <button
-                      type="button"
-                      aria-label={`Bank reconciliation status for ${v.voucher_number}: ${v.bank_link_status || 'unknown'}`}
-                      onClick={(e) => { e.stopPropagation(); handleView(v); }}
-                      title={
-                        v.bank_link_status === 'linked'
-                          ? 'Bank transaction linked'
-                          : v.bank_link_status === 'partial'
-                            ? `Partially linked · ${fmt(v.bank_linked_amount || 0, bankCcy)} of ${fmt(debit, bankCcy)}`
-                            : v.bank_link_status === 'unlinked'
-                              ? 'Not linked to a bank transaction · Click to check details'
-                              : 'Bank-link status unavailable · Click to check details'
-                      }
-                      className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${
-                        v.bank_link_status === 'linked'
-                          ? 'text-green-700 hover:bg-green-50'
-                          : v.bank_link_status === 'partial'
-                            ? 'text-amber-700 hover:bg-amber-50'
-                            : v.bank_link_status === 'unlinked'
-                              ? 'text-red-600 hover:bg-red-50'
-                              : 'text-gray-400 hover:bg-gray-100'
-                      }`}
-                    >
-                      <Link2 className="w-3.5 h-3.5" />
-                    </button>
                     <FinanceActionButton action="view" onClick={(e) => { e.stopPropagation(); handleView(v); }} />
                     {canManage && !v.is_posted && (
                       <>

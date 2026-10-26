@@ -217,8 +217,11 @@ function FinanceContent() {
   } | null>(null);
   const [expenseReconPrefill, setExpenseReconPrefill] = useState<BankReconciliationExpensePrefill | null>(null);
   const [receiptReconPrefill, setReceiptReconPrefill] = useState<BankReconciliationReceiptPrefill | null>(null);
-  const handleOpenBankReconciliation = useCallback((bankAccountId: string, bankStatementLineId: string) => {
-    const query = new URLSearchParams({ bank: bankAccountId, bankLine: bankStatementLineId });
+  const handleOpenBankReconciliation = useCallback((bankAccountId?: string, bankStatementLineId?: string) => {
+    const params: Record<string, string> = {};
+    if (bankAccountId) params.bank = bankAccountId;
+    if (bankStatementLineId) params.bankLine = bankStatementLineId;
+    const query = new URLSearchParams(params);
     setActiveTab('bank_recon', query);
   }, [setActiveTab]);
   const handleBankReconciliationFocusHandled = useCallback(() => {
@@ -392,9 +395,9 @@ function FinanceContent() {
         if (!hasPurchaseInvoices) return <div className="p-8 text-center text-gray-500">Access denied</div>;
         return <PurchaseInvoiceManager canManage={canManagePurchaseInvoices} initialViewInvoiceId={focusPurchaseInvoiceId} onInitialViewHandled={() => setFocusPurchaseInvoiceId(null)} />;
       case 'receipt':
-        return <ReceiptVoucherManager canManage={canManage} initialViewVoucherId={focusReceiptId} onInitialViewHandled={() => setFocusReceiptId(null)} prefillFromBankReconciliation={receiptReconPrefill} onBankReconciliationPrefillConsumed={() => setReceiptReconPrefill(null)} />;
+        return <ReceiptVoucherManager canManage={canManage} initialViewVoucherId={focusReceiptId} onInitialViewHandled={() => setFocusReceiptId(null)} prefillFromBankReconciliation={receiptReconPrefill} onBankReconciliationPrefillConsumed={() => setReceiptReconPrefill(null)} onOpenBankReconciliation={handleOpenBankReconciliation} />;
       case 'payment':
-        return <PaymentVoucherManager canManage={canManage} initialViewVoucherId={focusPaymentId} onInitialViewHandled={() => setFocusPaymentId(null)} prefillInvoice={payInvoice} onPrefillConsumed={() => setPayInvoice(null)} prefillExpenseBill={payExpenseBill} onPrefillExpenseBillConsumed={() => setPayExpenseBill(null)} onViewInvoice={(invoiceId) => openFinanceTarget('purchase', 'document', invoiceId)} onViewExpense={(expenseId) => openFinanceTarget('expenses', 'document', expenseId)} prefillFromBankReconciliation={paymentReconPrefill} onBankReconciliationPrefillConsumed={() => setPaymentReconPrefill(null)} />;
+        return <PaymentVoucherManager canManage={canManage} initialViewVoucherId={focusPaymentId} onInitialViewHandled={() => setFocusPaymentId(null)} prefillInvoice={payInvoice} onPrefillConsumed={() => setPayInvoice(null)} prefillExpenseBill={payExpenseBill} onPrefillExpenseBillConsumed={() => setPayExpenseBill(null)} onViewInvoice={(invoiceId) => openFinanceTarget('purchase', 'document', invoiceId)} onViewExpense={(expenseId) => openFinanceTarget('expenses', 'document', expenseId)} prefillFromBankReconciliation={paymentReconPrefill} onBankReconciliationPrefillConsumed={() => setPaymentReconPrefill(null)} onOpenBankReconciliation={handleOpenBankReconciliation} />;
       case 'journal':
         return <GeneralJournalEntry
           canManage={canManage}
