@@ -1589,23 +1589,17 @@ export function PaymentVoucherManager({
               ? <span className="text-gray-500 text-[10px]">Salary deduction</span>
               : <span className="font-medium text-red-600">{fmt(v.net_amount, v.invoice_currency || 'IDR')}</span> },
             {
-              header: 'Bank Link',
-              align: 'center' as const,
-              cell: (v: PaymentVoucher) => (
-                <VoucherBankLinkIndicator
-                  voucherNumber={v.voucher_number}
-                  evaluation={v.bank_link_evaluation}
-                  bankAccountId={v.bank_account_id}
-                  onOpenBankReconciliation={onOpenBankReconciliation}
-                />
-              ),
-            },
-            {
               header: 'Actions',
               align: 'center' as const,
               cell: (v: PaymentVoucher) => {
                 return (
                   <div className="flex items-center justify-center gap-0.5 whitespace-nowrap">
+                    <VoucherBankLinkIndicator
+                      voucherNumber={v.voucher_number}
+                      evaluation={v.bank_link_evaluation}
+                      bankAccountId={v.bank_account_id}
+                      onOpenBankReconciliation={onOpenBankReconciliation}
+                    />
                     <FinanceActionButton action="view" onClick={(e) => { e.stopPropagation(); handleView(v); }} />
                     {canManage && !v.is_posted && (
                       <>
