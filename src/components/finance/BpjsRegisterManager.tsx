@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import {
   FileText, Download, RefreshCw, UploadCloud,
   Link2, Trash2, ExternalLink, ShieldCheck,
-  Check, Search
+  Check, Search, X, CheckCircle2
 } from 'lucide-react';
 import { FinancePage } from './FinancePage';
 import { FinanceTable } from './FinanceTable';
@@ -81,6 +81,7 @@ interface BpjsRegisterItem {
 
 interface BankLine {
   id: string;
+  bank_account_id?: string;
   transaction_date: string;
   debit_amount: number;
   credit_amount: number;
@@ -89,6 +90,14 @@ interface BankLine {
   reconciliation_status: string;
   matching_status: string;
   matched_entry_id: string | null;
+  bank_accounts?: {
+    id?: string;
+    bank_name?: string;
+    account_name?: string;
+    account_number?: string;
+    alias?: string | null;
+    currency?: string;
+  } | null;
 }
 
 interface Props {
@@ -117,6 +126,12 @@ export function BpjsRegisterManager({ canManage }: Props) {
   const [loadingBankLines, setLoadingBankLines] = useState<boolean>(false);
   const [selectedBankLineId, setSelectedBankLineId] = useState<string>('');
   const [paymentRefInput, setPaymentRefInput] = useState<string>('');
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+  const [selectedBankAccountId, setSelectedBankAccountId] = useState<string>('all');
+  const [bankLineSearch, setBankLineSearch] = useState<string>('');
+  const [bankLineStartDate, setBankLineStartDate] = useState<string>('');
+  const [bankLineEndDate, setBankLineEndDate] = useState<string>('');
+  const [unlinkedOnly, setUnlinkedOnly] = useState<boolean>(true);
   const [uploadModalOpen, setUploadModalOpen] = useState<boolean>(false);
   const [pendingDocs, setPendingDocs] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState<boolean>(false);
@@ -260,29 +275,65 @@ export function BpjsRegisterManager({ canManage }: Props) {
     }
   };
 
-  const openBankReconciliationModal = async () => {
-    setLinkBankModalOpen(true);
+  const fetchCandidateBankLines = async (start?: string, end?: string, accountId?: string) => {
     setLoadingBankLines(true);
     try {
-      // Find candidate bank statement lines with debit amount matching or description with BPJS
-      const { data, error } = await supabase
+      let query = supabase
         .from('bank_statement_lines')
-        .select('id, transaction_date, debit_amount, credit_amount, description, reference, reconciliation_status, matching_status, matched_entry_id')
-        .gt('debit_amount', 0)
+        .select(`
+          id,
+          bank_account_id,
+          transaction_date,
+          debit_amount,
+          credit_amount,
+          description,
+          reference,
+          reconciliation_status,
+          matching_status,
+          matched_entry_id,
+          bank_accounts:bank_account_id(id, bank_name, account_name, account_number, alias, currency)
+        `)
+        .gt('debit_amount', 0);
+
+      const startDate = start !== undefined ? start : bankLineStartDate;
+      const endDate = end !== undefined ? end : bankLineEndDate;
+      const acct = accountId !== undefined ? accountId : selectedBankAccountId;
+
+      if (acct && acct !== 'all') {
+        query = query.eq('bank_account_id', acct);
+      }
+      if (startDate) query = query.gte('transaction_date', startDate);
+      if (endDate) query = query.lte('transaction_date', endDate);
+
+      const { data, error } = await query
         .order('transaction_date', { ascending: false })
-        .limit(30);
+        .limit(100);
 
       if (error) {
         showToast({ type: 'error', title: 'Bank lines load failed', message: error.message });
       } else {
-        setCandidateBankLines(data || []);
-        // Auto-select known BPJS TK statement line if present
-        const match = (data || []).find(l => l.description.includes('BPJS TK') || l.description.includes('26719331'));
-        if (match) {
-          setSelectedBankLineId(match.id);
-          setPaymentRefInput(match.reference || match.description);
-        } else if (data && data.length > 0) {
-          setSelectedBankLineId(data[0].id);
+        const rawLines = (data || []) as any[];
+        const lines: BankLine[] = rawLines.map(l => ({
+          ...l,
+          bank_accounts: Array.isArray(l.bank_accounts) ? l.bank_accounts[0] : l.bank_accounts
+        }));
+        setCandidateBankLines(lines);
+
+        // Auto-select ONLY if there is a STRONG match:
+        // Matches exact contribution payable AND description has BPJS/NPP, AND NOT already reconciled!
+        const targetAmount = Number(register?.official_billed_amount || register?.total_contribution_payable || 0);
+        const strongMatch = lines.find(l => {
+          const isNotSettled = l.reconciliation_status === 'matched' && !l.matched_entry_id;
+          const isAmtMatch = Math.abs(Number(l.debit_amount) - targetAmount) < 0.01;
+          const isBpjsDesc = /BPJS|26719331|42671933/i.test(l.description || '');
+          return isNotSettled && isAmtMatch && isBpjsDesc;
+        });
+
+        if (strongMatch) {
+          setSelectedBankLineId(strongMatch.id);
+          setPaymentRefInput(strongMatch.reference || strongMatch.description);
+        } else {
+          setSelectedBankLineId('');
         }
       }
     } catch (err: any) {
@@ -290,6 +341,44 @@ export function BpjsRegisterManager({ canManage }: Props) {
     } finally {
       setLoadingBankLines(false);
     }
+  };
+
+  const openBankReconciliationModal = async () => {
+    setLinkBankModalOpen(true);
+    setSelectedBankLineId('');
+    setBankLineSearch('');
+    setUnlinkedOnly(true);
+
+    // Load active bank accounts if not loaded yet
+    let accounts = bankAccounts;
+    if (accounts.length === 0) {
+      const { data: acctData } = await supabase
+        .from('bank_accounts')
+        .select('id, bank_name, account_name, account_number, alias, currency')
+        .eq('is_active', true)
+        .order('bank_name');
+      if (acctData) {
+        setBankAccounts(acctData);
+        accounts = acctData;
+      }
+    }
+
+    // Default to BCA IDR if available, else 'all'
+    const bca = accounts.find(a => (a.bank_name || '').toUpperCase().includes('BCA') && (a.currency === 'IDR' || !a.currency));
+    const initialAccountId = bca ? bca.id : 'all';
+    setSelectedBankAccountId(initialAccountId);
+
+    // Contextual settlement window: start of contribution month to end of subsequent month
+    const targetMonthStr = String(selectedMonth).padStart(2, '0');
+    const startCandidate = `${selectedYear}-${targetMonthStr}-01`;
+    const nextMonth = selectedMonth === 12 ? 1 : selectedMonth + 1;
+    const nextYear = selectedMonth === 12 ? selectedYear + 1 : selectedYear;
+    const lastDayNextMonth = new Date(nextYear, nextMonth, 0).getDate();
+    const endCandidate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-${String(lastDayNextMonth).padStart(2, '0')}`;
+
+    setBankLineStartDate(startCandidate);
+    setBankLineEndDate(endCandidate);
+    await fetchCandidateBankLines(startCandidate, endCandidate, initialAccountId);
   };
 
   const handleLinkBankPayment = async () => {
@@ -912,7 +1001,7 @@ export function BpjsRegisterManager({ canManage }: Props) {
         <FinanceModal
           isOpen={linkBankModalOpen}
           onClose={() => setLinkBankModalOpen(false)}
-          title="Link Bank Statement Payment Line"
+          title={`Link Bank Statement Payment Line — ${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}`}
           size="lg"
           footer={(
             <>
@@ -920,66 +1009,273 @@ export function BpjsRegisterManager({ canManage }: Props) {
               <FinanceButton
                 variant="primary"
                 onClick={handleLinkBankPayment}
-                disabled={!selectedBankLineId}
+                disabled={!selectedBankLineId || candidateBankLines.find(l => l.id === selectedBankLineId)?.reconciliation_status === 'matched'}
               >
                 Reconcile & Settle Payment
               </FinanceButton>
             </>
           )}
         >
-          <div className="space-y-3">
-            <p className="text-xs text-gray-600">
-              Select the bank transaction line that settled this BPJS contribution period. This will record debit to 2134 BPJS Payable and credit to Bank BCA, marking the statement line reconciled.
-            </p>
+          <div className="space-y-4">
+            {/* Context Summary Header */}
+            <div className="p-3 bg-indigo-50/60 border border-indigo-100 rounded-lg flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div>
+                <span className="text-gray-500 block text-[11px] font-medium uppercase tracking-wider">BPJS Period Payable</span>
+                <span className="font-mono font-bold text-sm text-indigo-950">
+                  Rp {Number(register?.official_billed_amount || register?.total_contribution_payable || 0).toLocaleString('id-ID')}
+                </span>
+                <span className="text-[11px] text-gray-500 ml-2">
+                  (Bill: Rp {Number(register?.official_billed_amount || 0).toLocaleString('id-ID')} • Calc: Rp {Number(register?.total_contribution_payable || 0).toLocaleString('id-ID')})
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-gray-500 block text-[11px] font-medium uppercase tracking-wider">Settlement Ledger</span>
+                <span className="font-mono font-medium text-gray-700">Dr 2134 BPJS Payable • Cr Bank Ledger</span>
+              </div>
+            </div>
 
-            <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+            {/* Filter Bar */}
+            <div className="space-y-2 pt-1 border-t border-gray-100">
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-2 text-xs">
+                {/* Search */}
+                <div className="md:col-span-5 relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-gray-400" />
+                  <input
+                    type="text"
+                    value={bankLineSearch}
+                    onChange={e => setBankLineSearch(e.target.value)}
+                    placeholder="Search desc, ref, amount (767520), date..."
+                    className="w-full h-8 pl-8 pr-7 text-xs border border-gray-300 rounded focus:border-indigo-500 focus:outline-none"
+                  />
+                  {bankLineSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setBankLineSearch('')}
+                      className="absolute right-2 top-2 text-gray-400 hover:text-gray-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Bank Account */}
+                <div className="md:col-span-3">
+                  <select
+                    value={selectedBankAccountId}
+                    onChange={e => {
+                      const newAcct = e.target.value;
+                      setSelectedBankAccountId(newAcct);
+                      fetchCandidateBankLines(bankLineStartDate, bankLineEndDate, newAcct);
+                    }}
+                    className="w-full h-8 px-2 text-xs border border-gray-300 rounded focus:border-indigo-500 focus:outline-none bg-white truncate"
+                  >
+                    <option value="all">All Bank Accounts</option>
+                    {bankAccounts.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.alias || b.bank_name} {b.account_number ? `(${b.account_number})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Date Range Controls */}
+                <div className="md:col-span-4 flex items-center gap-1.5">
+                  <input
+                    type="date"
+                    value={bankLineStartDate}
+                    onChange={e => setBankLineStartDate(e.target.value)}
+                    className="w-full h-8 px-1.5 text-[11px] border border-gray-300 rounded font-mono"
+                    title="From Date"
+                  />
+                  <span className="text-gray-400 text-xs">to</span>
+                  <input
+                    type="date"
+                    value={bankLineEndDate}
+                    onChange={e => setBankLineEndDate(e.target.value)}
+                    className="w-full h-8 px-1.5 text-[11px] border border-gray-300 rounded font-mono"
+                    title="To Date"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fetchCandidateBankLines(bankLineStartDate, bankLineEndDate, selectedBankAccountId)}
+                    className="h-8 px-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-xs flex items-center gap-1 shrink-0 transition-colors"
+                    title="Refresh transactions"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Unlinked only toggle */}
+              <div className="flex items-center justify-between text-xs text-gray-600 px-1">
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={unlinkedOnly}
+                    onChange={e => setUnlinkedOnly(e.target.checked)}
+                    className="rounded text-indigo-600 focus:ring-0"
+                  />
+                  <span>Hide settled / already reconciled transactions</span>
+                </label>
+                <span className="text-[11px] text-gray-400">
+                  {candidateBankLines.length} candidates loaded
+                </span>
+              </div>
+            </div>
+
+            {/* Candidate List */}
+            <div className="max-h-72 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
               {loadingBankLines ? (
-                <div className="p-4 text-center text-xs text-gray-500">Loading bank statement lines...</div>
-              ) : candidateBankLines.length === 0 ? (
-                <div className="p-4 text-center text-xs text-gray-500">No unlinked debit transactions found.</div>
-              ) : (
-                candidateBankLines.map(line => {
+                <div className="p-8 text-center text-xs text-gray-500 flex flex-col items-center gap-2">
+                  <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
+                  <span>Loading bank transactions...</span>
+                </div>
+              ) : (() => {
+                const targetAmt = Number(register?.official_billed_amount || register?.total_contribution_payable || 0);
+                const filtered = candidateBankLines.filter(line => {
+                  const isSettled = line.reconciliation_status === 'matched' || !!line.matched_entry_id;
+                  if (unlinkedOnly && isSettled) return false;
+                  if (!bankLineSearch.trim()) return true;
+
+                  const term = bankLineSearch.trim().toLowerCase();
+                  const rawAmt = String(Number(line.debit_amount || 0));
+                  const formattedAmt = Number(line.debit_amount || 0).toLocaleString('id-ID');
+                  const desc = (line.description || '').toLowerCase();
+                  const ref = (line.reference || '').toLowerCase();
+                  const dt = (line.transaction_date || '').toLowerCase();
+                  return desc.includes(term) || ref.includes(term) || dt.includes(term) || rawAmt.includes(term) || formattedAmt.includes(term);
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="p-8 text-center text-xs text-gray-500 space-y-1">
+                      <p className="font-medium text-gray-700">No bank statement lines match the selected filters.</p>
+                      <p className="text-[11px] text-gray-400">Try widening the date range, changing bank account, or clearing the search keyword.</p>
+                    </div>
+                  );
+                }
+
+                return filtered.map(line => {
                   const isSelected = selectedBankLineId === line.id;
-                  const isBpjsMatch = line.description.includes('BPJS') || line.description.includes('26719331');
+                  const isSettled = line.reconciliation_status === 'matched' || !!line.matched_entry_id;
+                  const isAmtMatch = Math.abs(Number(line.debit_amount) - targetAmt) < 0.01;
+                  const isBpjsDesc = /BPJS|26719331|42671933/i.test(line.description || '');
+                  const isStrongMatch = !isSettled && isAmtMatch && isBpjsDesc;
+
+                  // Format Indonesian date DD/MM/YYYY
+                  const [y, m, d] = (line.transaction_date || '').split('-');
+                  const formattedDate = y && m && d ? `${d}/${m}/${y}` : line.transaction_date;
+
                   return (
                     <div
                       key={line.id}
                       onClick={() => {
+                        if (isSettled) {
+                          showToast({ type: 'warning', title: 'Cannot Select Settled Line', message: 'This transaction is already reconciled to another entry.' });
+                          return;
+                        }
                         setSelectedBankLineId(line.id);
                         setPaymentRefInput(line.reference || line.description);
                       }}
-                      className={`p-2.5 flex items-center justify-between cursor-pointer transition-colors ${
-                        isSelected ? 'bg-indigo-50/80 border-l-4 border-l-indigo-600' : 'hover:bg-gray-50'
+                      className={`p-3 flex items-start justify-between transition-colors ${
+                        isSettled
+                          ? 'bg-gray-50/70 opacity-60 cursor-not-allowed'
+                          : isSelected
+                          ? 'bg-indigo-50 border-l-4 border-l-indigo-600 cursor-pointer'
+                          : 'hover:bg-gray-50 cursor-pointer'
                       }`}
                     >
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs font-semibold text-gray-900">
-                            {new Date(line.transaction_date).toLocaleDateString('id-ID')}
+                      <div className="space-y-1 pr-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type="radio"
+                            checked={isSelected}
+                            disabled={isSettled}
+                            readOnly
+                            className="text-indigo-600 focus:ring-0 mt-0.5"
+                          />
+                          <span className="font-mono text-xs font-bold text-gray-900">
+                            {formattedDate}
                           </span>
-                          {isBpjsMatch && (
-                            <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                              Suggested Match
+                          {line.bank_accounts && (
+                            <span className="text-[10px] font-medium text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">
+                              {line.bank_accounts.alias || line.bank_accounts.bank_name}
                             </span>
                           )}
+                          {isSettled ? (
+                            <span className="text-[10px] font-semibold text-gray-600 bg-gray-200 px-1.5 py-0.5 rounded">
+                              Already Settled / Reconciled
+                            </span>
+                          ) : isStrongMatch ? (
+                            <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded border border-emerald-300 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              Exact Amount & BPJS Keyword Match
+                            </span>
+                          ) : isAmtMatch ? (
+                            <span className="text-[10px] font-semibold text-blue-800 bg-blue-100 px-1.5 py-0.5 rounded border border-blue-200">
+                              Amount Match (Rp {targetAmt.toLocaleString('id-ID')})
+                            </span>
+                          ) : isBpjsDesc ? (
+                            <span className="text-[10px] font-semibold text-purple-800 bg-purple-100 px-1.5 py-0.5 rounded border border-purple-200">
+                              BPJS Keyword
+                            </span>
+                          ) : null}
                         </div>
-                        <div className="text-xs text-gray-600 font-mono truncate max-w-md" title={line.description}>
+
+                        <div className="text-xs text-gray-800 font-mono break-all" title={line.description}>
                           {line.description}
                         </div>
+                        {line.reference && (
+                          <div className="text-[11px] text-gray-500 font-mono">
+                            Ref: {line.reference}
+                          </div>
+                        )}
                       </div>
-                      <div className="text-right">
+
+                      <div className="text-right shrink-0">
                         <div className="font-mono font-bold text-xs text-gray-900">
                           Rp {Number(line.debit_amount).toLocaleString('id-ID')}
                         </div>
-                        <div className="text-[10px] text-gray-400 font-mono">
-                          {line.matching_status}
+                        <div className="text-[10px] text-gray-400 font-mono mt-0.5 capitalize">
+                          {line.reconciliation_status} • {line.matching_status}
                         </div>
                       </div>
                     </div>
                   );
-                })
-              )}
+                });
+              })()}
             </div>
+
+            {/* Selected Transaction Summary Banner */}
+            {selectedBankLineId && (() => {
+              const selectedLine = candidateBankLines.find(l => l.id === selectedBankLineId);
+              if (!selectedLine) return null;
+              const targetAmt = Number(register?.official_billed_amount || register?.total_contribution_payable || 0);
+              const selectedAmt = Number(selectedLine.debit_amount || 0);
+              const variance = selectedAmt - targetAmt;
+
+              return (
+                <div className="p-2.5 bg-blue-50/70 border border-blue-200 rounded-md text-xs flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <span className="font-semibold text-blue-900">Selected Transaction:</span>
+                    <div className="text-blue-800 font-mono text-[11px]">
+                      {selectedLine.transaction_date} • Rp {selectedAmt.toLocaleString('id-ID')}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    {Math.abs(variance) < 0.01 ? (
+                      <span className="font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded text-[11px]">
+                        Exact Match (Variance Rp 0)
+                      </span>
+                    ) : (
+                      <span className="font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded text-[11px]">
+                        Variance: Rp {variance.toLocaleString('id-ID')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Payment Reference / Notes</label>

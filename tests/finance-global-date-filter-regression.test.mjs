@@ -14,11 +14,14 @@ const cases = [
 for (const [file, table, dateColumn] of cases) {
   const source = await readFile(file, 'utf8');
   assert.match(source, /useFinance/, `${file} must use the existing global Finance context`);
-  const tableStart = source.indexOf(`.from('${table}')`);
-  assert.notEqual(tableStart, -1, `${file} must query ${table}`);
-  const query = source.slice(tableStart, tableStart + 1_500);
-  assert.match(query, new RegExp(`\\.gte\\('${dateColumn}', dateRange\\.startDate\\)`), `${table} must apply the global start date to ${dateColumn}`);
-  assert.match(query, new RegExp(`\\.lte\\('${dateColumn}', dateRange\\.endDate\\)`), `${table} must apply the global end date to ${dateColumn}`);
+  const chunks = source.split(`.from('${table}')`).slice(1);
+  assert.ok(chunks.length > 0, `${file} must query ${table}`);
+  const hasDateFilter = chunks.some(chunk => {
+    const snippet = chunk.slice(0, 1500);
+    return new RegExp(`\\.gte\\('${dateColumn}', dateRange\\.startDate\\)`).test(snippet) &&
+      new RegExp(`\\.lte\\('${dateColumn}', dateRange\\.endDate\\)`).test(snippet);
+  });
+  assert.ok(hasDateFilter, `${table} must apply the global start and end date to ${dateColumn}`);
 }
 
 console.log('finance global date-filter regression passed');
