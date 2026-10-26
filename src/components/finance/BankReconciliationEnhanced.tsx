@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark, FileText, Pencil as Edit, ChevronDown, ChevronRight, Clock, Info, X, Sparkles } from 'lucide-react';
+import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark, FileText, Pencil as Edit, ChevronDown, ChevronRight, Clock, Info, X, Sparkles, Link2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { FinanceModal as Modal } from './FinanceModal';
 import { SearchableSelect } from '../SearchableSelect';
@@ -4945,6 +4945,26 @@ export function BankReconciliationEnhanced({
                         Opens the full SAPJ Expense form supporting Category, Utility (e.g. PT. PAM JAYA - water), billing date, billing month, billing reference, amount, PPN, PPH withholding/code, invoice description, payment method, currency, and original bill/receipt attachments.
                       </p>
                     </div>
+
+                    {recordingLine.matchedExpense && (
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                        <div className="flex items-center gap-2 text-amber-900 font-semibold text-xs">
+                          <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                          <span>Existing Expense Found For This Transaction</span>
+                        </div>
+                        <div className="text-xs text-amber-800">
+                          Expense <strong>{recordingLine.matchedExpense.voucher_number || 'Expense'}</strong> ({formatCurrency(recordingLine.matchedExpense.amount, recordingLine.currency)} · {recordingLine.matchedExpense.description}) was previously created for this bank transaction.
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleLinkToExpense(recordingLine, recordingLine.matchedExpenseId!)}
+                          className="w-full py-2 bg-amber-600 hover:bg-amber-700 text-white rounded font-medium text-xs flex items-center justify-center gap-1.5 shadow-sm"
+                        >
+                          <Link2 className="w-3.5 h-3.5" />
+                          Link to Existing {recordingLine.matchedExpense.voucher_number || 'Expense'}
+                        </button>
+                      </div>
+                    )}
 
                     <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1.5">
                       <div className="flex justify-between">

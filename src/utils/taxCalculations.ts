@@ -809,6 +809,27 @@ export function calculateExpenseReconciliation(
   };
 }
 
+export const BANK_ALLOCATION_EPSILON = 0.01;
+export type CanonicalBankReconStatus = 'matched' | 'partially_reconciled' | 'unmatched';
+
+/**
+ * Linked / partial / unlinked from bank_statement_allocations or direct confirmed recorded entry.
+ * Legacy matched_* FKs, reconciliation_status, and manually_unlinked are ignored.
+ */
+export function canonicalBankReconciliationStatus(
+  bankAmount: number,
+  allocatedAmount: number,
+  epsilon: number = BANK_ALLOCATION_EPSILON,
+  isDirectRecorded: boolean = false,
+): CanonicalBankReconStatus {
+  if (isDirectRecorded) return 'matched';
+  const bank = Number(bankAmount) || 0;
+  const allocated = Number(allocatedAmount) || 0;
+  if (allocated <= epsilon) return 'unmatched';
+  if (allocated >= bank - epsilon) return 'matched';
+  return 'partially_reconciled';
+}
+
 // ---------------------------------------------------------------------------
 // Date utilities
 // ---------------------------------------------------------------------------
