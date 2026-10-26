@@ -57,7 +57,7 @@ const DEFAULT: CategoryFieldRules = {
   salaryMonth:        'hide',
   billingMonth:       'hide',
   reference:          'show',
-  bankCharges:        'hide',
+  bankCharges:        'show',
   salesInvoice:       'hide',
   workingDays:        'hide',
   providerTypeToggle: false,

@@ -1717,7 +1717,7 @@ export function ExpenseManager({
         pph_code_id:            (persistHeaderTax && formData.pph_code_id) ? formData.pph_code_id : null,
         stamp_duty_amount:      persistHeaderTax ? (formData.stamp_duty_amount || 0) : 0,
         fixed_asset_account_id: isFixedAsset ? (formData.fixed_asset_account_id || null) : null,
-        bank_charges_amount:    rules.bankCharges === 'show' ? (formData.bank_charges_amount || 0) : 0,
+        bank_charges_amount:    Number(formData.bank_charges_amount ?? editingExpense?.bank_charges_amount ?? 0),
         currency_code: transactionCurrency,
         transaction_currency: transactionCurrency,
         functional_currency: 'IDR' as const,
@@ -4276,13 +4276,16 @@ export function ExpenseManager({
                           className={SAP_INPUT + ' !text-right !font-mono'} />
                       </SapField>
                     )}
-                    {rules.bankCharges === 'show' && (
-                      <SapField label="Bank Charges" span={3}>
-                        <MoneyInput value={formData.bank_charges_amount} placeholder="0.00"
-                          onChange={(v) => setFormData({ ...formData, bank_charges_amount: v })}
-                          className={SAP_INPUT + ' !text-right !font-mono'} />
-                      </SapField>
-                    )}
+                    <SapField label={`Bank Charges (${expenseFormCurrency})`} span={3}>
+                      <MoneyInput
+                        name="bank_charges_amount"
+                        aria-label={`Bank Charges (${expenseFormCurrency})`}
+                        value={formData.bank_charges_amount}
+                        placeholder="0.00"
+                        onChange={(v) => setFormData({ ...formData, bank_charges_amount: v })}
+                        className={SAP_INPUT + ' !text-right !font-mono'}
+                      />
+                    </SapField>
                     {(requiresContainer || isBroker) && (
                       <SapField label="Import Container" required={requiresContainer} span={3}>
                         <SearchableSelect
@@ -4796,7 +4799,7 @@ export function ExpenseManager({
                   })()}
 
                   {/* Non-broker payment summary — horizontal formula bar */}
-                  {formData.expense_category !== 'import_broker' && !isPib && (formData.amount > 0 || formData.ppn_amount > 0 || formData.pph_amount > 0 || formData.stamp_duty_amount > 0) && (() => {
+                  {formData.expense_category !== 'import_broker' && !isPib && (formData.amount > 0 || formData.ppn_amount > 0 || formData.pph_amount > 0 || formData.stamp_duty_amount > 0 || (formData.bank_charges_amount || 0) > 0) && (() => {
                     const totals = calculateExpenseTotals(formData);
                     const bc = totals.bankChargesAmount;
                     const payable = totals.netPayable;
@@ -4811,12 +4814,18 @@ export function ExpenseManager({
                       maximumFractionDigits: expenseFormCurrency === 'IDR' ? 0 : 2,
                     });
                     type FormulaCell = { label: string; value: number; valueColor: string; op?: string; show: boolean };
-                    const cells: FormulaCell[] = [
-                      { label: 'Invoice Amount', value: formData.amount || 0, valueColor: 'text-gray-900', op: '+', show: true },
-                      { label: 'PPN', value: formData.ppn_amount || 0, valueColor: 'text-blue-700', op: '−', show: (formData.ppn_amount || 0) > 0 },
-                      { label: 'PPh Withheld', value: formData.pph_amount || 0, valueColor: 'text-orange-700', op: '+', show: (formData.pph_amount || 0) > 0 },
-                      { label: 'Stamp Duty', value: formData.stamp_duty_amount || 0, valueColor: 'text-gray-900', op: '+', show: (formData.stamp_duty_amount || 0) > 0 },
+                    const rawCells: Array<{ label: string; value: number; valueColor: string; isDeduction?: boolean; show: boolean }> = [
+                      { label: 'Invoice Amount', value: formData.amount || 0, valueColor: 'text-gray-900', show: true },
+                      { label: 'PPN', value: formData.ppn_amount || 0, valueColor: 'text-blue-700', show: (formData.ppn_amount || 0) > 0 },
+                      { label: 'PPh Withheld', value: formData.pph_amount || 0, valueColor: 'text-orange-700', isDeduction: true, show: (formData.pph_amount || 0) > 0 },
+                      { label: 'Stamp Duty', value: formData.stamp_duty_amount || 0, valueColor: 'text-gray-900', show: (formData.stamp_duty_amount || 0) > 0 },
+                      { label: 'Bank Charges', value: bc, valueColor: 'text-gray-900', show: bc > 0 },
                     ].filter(c => c.show);
+                    const cells: FormulaCell[] = rawCells.map((cell, idx) => {
+                      const nextCell = rawCells[idx + 1];
+                      const op = nextCell ? (nextCell.isDeduction ? '−' : '+') : undefined;
+                      return { ...cell, op };
+                    });
                     return (
                       <div className="mt-1.5 flex items-stretch border border-gray-200 rounded-lg bg-white overflow-x-auto">
                         {cells.map((cell, i) => (
