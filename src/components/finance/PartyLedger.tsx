@@ -523,16 +523,30 @@ export default function PartyLedger() {
             const lineCredit = Number(line.credit || 0);
             const rawRef = line.journal_entries?.reference_number || '';
             const refId = line.journal_entries?.reference_id || '';
-            let lineRef = rawRef;
-
-            if (rawRef.startsWith('EXP-')) {
-              const sub = rawRef.substring(4);
-              lineRef = expVoucherMap[sub] || (!isUuid(sub) ? sub : (line.journal_entries?.entry_number || ''));
+            let lineRef = '';
+            if (rawRef.startsWith('PV/') || rawRef.startsWith('EXP/')) {
+              lineRef = rawRef;
             } else if (refId && expVoucherMap[refId]) {
               lineRef = expVoucherMap[refId];
+            } else if (rawRef.startsWith('EXP-')) {
+              const sub = rawRef.substring(4);
+              if (expVoucherMap[sub]) {
+                lineRef = expVoucherMap[sub];
+              } else if (sub.startsWith('PAY-')) {
+                const payId = sub.substring(4);
+                lineRef = (refId && expVoucherMap[refId]) || (isUuid(payId) ? '' : sub) || line.journal_entries?.entry_number || '';
+              } else if (!isUuid(sub)) {
+                lineRef = sub;
+              } else {
+                lineRef = line.journal_entries?.entry_number || '';
+              }
+            } else if (rawRef.startsWith('HR-PAY-') || rawRef.startsWith('HR-')) {
+              lineRef = (refId && expVoucherMap[refId]) || line.journal_entries?.entry_number || '';
             } else if (isUuid(rawRef)) {
               lineRef = expVoucherMap[rawRef] || line.journal_entries?.entry_number || '';
-            } else if (!lineRef) {
+            } else if (rawRef) {
+              lineRef = rawRef;
+            } else {
               lineRef = line.journal_entries?.entry_number || '';
             }
 
@@ -853,8 +867,11 @@ export default function PartyLedger() {
 
   const formatBalance = (balance: number, curr = (partyType === 'supplier' ? supplierCurrency : 'IDR')) => {
     const absBalance = Math.abs(balance);
-    const label = balance >= 0 ? 'Dr' : 'Cr';
-    return `${formatAmount(absBalance, curr)} ${label}`;
+    if (absBalance < 0.005) {
+      return formatCurrency(0, curr);
+    }
+    const label = balance > 0 ? 'Dr' : 'Cr';
+    return `${formatCurrency(absBalance, curr)} ${label}`;
   };
 
   const totalDebit = ledgerEntries.reduce((sum, e) => sum + e.debit, 0);

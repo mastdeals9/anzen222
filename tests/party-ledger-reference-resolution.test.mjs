@@ -11,8 +11,8 @@ test('PartyLedger reference resolution logic and UUID sanitization', () => {
   assert.match(partyLedgerSrc, /const isUuid = \(val\?: string \| null\): boolean => Boolean\(val && UUID_REGEX\.test\(val\.trim\(\)\)\);/);
 
   // 2. Customs broker line resolution fetches reference_id and resolves EXP-
-  assert.match(partyLedgerSrc, /journal_entries!inner\(reference_id, reference_number, entry_number, transaction_category, is_posted, is_reversed\)/);
-  assert.match(partyLedgerSrc, /brokerExpMap\[sub\]/);
+  assert.match(partyLedgerSrc, /journal_entries!inner\(id, reference_id, reference_number, entry_number, source_module, transaction_category, is_posted, is_reversed\)/);
+  assert.match(partyLedgerSrc, /expVoucherMap\[sub\]/);
 
   // 3. Expense bill & advance references prioritize voucher_number when invoice_number is a UUID
   assert.match(partyLedgerSrc, /reference: \(!bill\.invoice_number \|\| isUuid\(bill\.invoice_number\)\) \? \(bill\.voucher_number \|\| ''\) : \(bill\.voucher_number \|\| bill\.invoice_number \|\| ''\)/);

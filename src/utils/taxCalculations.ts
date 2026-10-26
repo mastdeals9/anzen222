@@ -742,6 +742,7 @@ export function calculateExpenseReconciliation(
   const grossCashPayable = calculateCanonicalCashPayable(expense);
 
   let salaryAdvanceApplied = 0;
+  let nonSalaryVoucherAllocated = 0;
   if (expense.expense_category === 'salary') {
     if (additionalAdvanceApplications && additionalAdvanceApplications.length > 0) {
       salaryAdvanceApplied = additionalAdvanceApplications.reduce(
@@ -764,16 +765,21 @@ export function calculateExpenseReconciliation(
         );
       }
     }
+  } else if (Array.isArray(expense.voucher_allocations) && expense.voucher_allocations.length > 0) {
+    nonSalaryVoucherAllocated = expense.voucher_allocations.reduce(
+      (sum, va) => sum + Number(va.allocated_amount || 0),
+      0,
+    );
   }
 
   // Authoritative net cash payable to be matched against bank statement lines
-  const netCashPayable = Math.max(0, grossCashPayable - salaryAdvanceApplied);
+  const netCashPayable = Math.max(0, grossCashPayable - salaryAdvanceApplied - nonSalaryVoucherAllocated);
 
   const isFullyReconciled = netCashPayable <= 0.01
-    ? ((expense.paid_amount ?? 0) >= grossCashPayable - 0.01)
+    ? ((expense.paid_amount ?? 0) >= grossCashPayable - 0.01 || (reconciledAmount + nonSalaryVoucherAllocated) >= grossCashPayable - 0.01)
     : (reconciledAmount >= netCashPayable - 0.01);
 
-  const isPartiallyReconciled = !isFullyReconciled && (reconciledAmount > 0.01 && reconciledAmount < netCashPayable - 0.01);
+  const isPartiallyReconciled = !isFullyReconciled && ((reconciledAmount + nonSalaryVoucherAllocated) > 0.01 && (reconciledAmount + nonSalaryVoucherAllocated) < grossCashPayable - 0.01);
 
   // Authoritative payment status
   const billBalance = grossCashPayable - (expense.paid_amount ?? 0);
