@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Link2, Link2Off, AlertTriangle, ExternalLink, X } from 'lucide-react';
+import { Link2, Unlink, AlertTriangle, ExternalLink, X } from 'lucide-react';
 import { formatCurrency } from '../../utils/currency';
 import type { VoucherBankLinkEvaluation } from '../../utils/voucherBankLinks';
 
@@ -41,9 +41,9 @@ export function VoucherBankLinkIndicator({
   // Build descriptive hover tooltip text
   let hoverTooltip = '';
   if (status === 'unlinked') {
-    hoverTooltip = 'No bank statement transaction linked.';
+    hoverTooltip = 'Not linked to a bank transaction · Click to check details';
   } else if (status === 'needs_review') {
-    hoverTooltip = `Needs Review: ${evaluation?.conflictReason || 'Legacy and canonical bank links conflict.'}`;
+    hoverTooltip = `Data integrity issue: ${evaluation?.conflictReason || 'Reconciliation data integrity error.'}`;
   } else {
     const isPartial = status === 'partial';
     const amountStr = isPartial
@@ -68,27 +68,27 @@ export function VoucherBankLinkIndicator({
     }
   }
 
-  // Visual styling mapped to the 4 states
+  // Visual styling mapped to the 4 states (matching Expense Recon icon)
   let iconElement: React.ReactNode;
   let buttonClasses = '';
 
   switch (status) {
     case 'linked':
-      iconElement = <Link2 className="w-3.5 h-3.5 text-green-700" />;
-      buttonClasses = 'text-green-700 bg-green-50 hover:bg-green-100 border border-green-200';
+      iconElement = <Link2 className="w-3.5 h-3.5" />;
+      buttonClasses = 'text-green-700 hover:bg-green-50';
       break;
     case 'partial':
-      iconElement = <Link2 className="w-3.5 h-3.5 text-amber-700" />;
-      buttonClasses = 'text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-300';
+      iconElement = <Link2 className="w-3.5 h-3.5" />;
+      buttonClasses = 'text-amber-700 hover:bg-amber-50';
       break;
     case 'needs_review':
-      iconElement = <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />;
-      buttonClasses = 'text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-400 shadow-xs';
+      iconElement = <AlertTriangle className="w-3.5 h-3.5" />;
+      buttonClasses = 'text-amber-600 hover:bg-amber-50';
       break;
     case 'unlinked':
     default:
-      iconElement = <Link2Off className="w-3.5 h-3.5 text-gray-400 group-hover:text-red-500" />;
-      buttonClasses = 'text-gray-400 bg-gray-50 hover:text-red-600 hover:bg-red-50 border border-gray-200';
+      iconElement = <Unlink className="w-3.5 h-3.5" />;
+      buttonClasses = 'text-gray-400 hover:text-red-600 hover:bg-red-50';
       break;
   }
 
@@ -108,7 +108,7 @@ export function VoucherBankLinkIndicator({
           e.stopPropagation();
           setIsOpen(prev => !prev);
         }}
-        className={`group inline-flex h-6 w-6 items-center justify-center rounded transition-all focus:outline-none focus:ring-2 focus:ring-blue-300 ${buttonClasses}`}
+        className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${buttonClasses}`}
       >
         {iconElement}
       </button>
@@ -117,7 +117,7 @@ export function VoucherBankLinkIndicator({
       {isOpen && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="absolute left-0 top-full mt-1.5 z-40 w-72 max-w-sm rounded-lg bg-white p-3 text-left text-xs shadow-xl ring-1 ring-black/10"
+          className="absolute right-0 top-full mt-1 z-50 w-72 max-w-sm rounded-lg bg-white p-3 text-left text-xs shadow-xl ring-1 ring-black/10"
         >
           {/* Header */}
           <div className="flex items-center justify-between border-b pb-2 mb-2">

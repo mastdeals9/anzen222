@@ -1234,7 +1234,6 @@ export function ReceiptVoucherManager({
               <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-500 uppercase">Bank</th>
               <th className="px-2 py-1.5 text-left text-xs font-medium text-gray-500 uppercase">Allocated To</th>
               <th className="px-2 py-1.5 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
-              <th className="px-2 py-1.5 text-center text-xs font-medium text-gray-500 uppercase">Bank Link</th>
               <th className="px-2 py-1.5 text-center text-xs font-medium text-gray-500 uppercase">Actions</th>
             </tr>
           </thead>
@@ -1256,16 +1255,14 @@ export function ReceiptVoucherManager({
                 <td className="px-2 py-1.5 text-right font-medium text-green-600">
                   {formatCurrency(voucher.amount, voucherCurrency(voucher))}
                 </td>
-                <td className="px-2 py-1.5 text-center align-middle">
-                  <VoucherBankLinkIndicator
-                    voucherNumber={voucher.voucher_number}
-                    evaluation={voucher.bank_link_evaluation}
-                    bankAccountId={voucher.bank_account_id}
-                    onOpenBankReconciliation={onOpenBankReconciliation}
-                  />
-                </td>
                 <td className="px-2 py-1.5 align-middle">
                   <div className="flex h-7 items-center justify-center gap-0.5 whitespace-nowrap">
+                    <VoucherBankLinkIndicator
+                      voucherNumber={voucher.voucher_number}
+                      evaluation={voucher.bank_link_evaluation}
+                      bankAccountId={voucher.bank_account_id}
+                      onOpenBankReconciliation={onOpenBankReconciliation}
+                    />
                     <FinanceActionButton action="view" label="View Details" onClick={() => handleView(voucher)} />
                     {canManage && !voucher.is_posted && (
                       <>
