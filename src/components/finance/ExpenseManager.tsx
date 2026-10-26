@@ -1748,11 +1748,15 @@ export function ExpenseManager({
 
         const editingApprovedExpense = editingExpense.approval_status === 'approved';
         if (editingApprovedExpense) {
+          const docPayable = calculateCanonicalCashPayable({ ...editingExpense, ...expenseData });
+          const allocAmt = selectedBankAllocationAmount && selectedBankAllocationAmount > 0.01
+            ? (docPayable > 0.01 ? Math.min(selectedBankAllocationAmount, docPayable) : selectedBankAllocationAmount)
+            : (docPayable > 0.01 ? docPayable : undefined);
           await editApprovedFinanceExpense(
             editingExpense.id,
             expenseData,
             selectedBankTransactionId || null,
-            selectedBankAllocationAmount && selectedBankAllocationAmount > 0.01 ? selectedBankAllocationAmount : undefined,
+            allocAmt,
           );
         } else {
           await saveFinanceExpense(editingExpense.id, expenseData);
@@ -1865,21 +1869,22 @@ export function ExpenseManager({
               }
 
               const lineAmount = Number(lineCheck.debit_amount || lineCheck.credit_amount || 0);
+              const { data: fetchedExp } = await supabase
+                .from('finance_expenses')
+                .select('*')
+                .eq('id', existingExpId)
+                .single();
+
+              const docPayable = fetchedExp ? calculateCanonicalCashPayable(fetchedExp) : lineAmount;
               const allocAmt = selectedBankAllocationAmount && selectedBankAllocationAmount > 0.01
-                ? selectedBankAllocationAmount
-                : (lineAmount > 0 ? lineAmount : undefined);
+                ? (docPayable > 0.01 ? Math.min(selectedBankAllocationAmount, docPayable) : selectedBankAllocationAmount)
+                : (docPayable > 0.01 ? docPayable : (lineAmount > 0 ? lineAmount : undefined));
 
               try {
                 await linkBankStatementLine(selectedBankTransactionId, 'expense', existingExpId, 'supplier', allocAmt);
                 await syncExpenseBankLinks([existingExpId]);
                 setReconciledExpenseIds(prev => new Set(prev).add(existingExpId));
                 notifyFinanceReconciliationRefresh();
-
-                const { data: fetchedExp } = await supabase
-                  .from('finance_expenses')
-                  .select('*')
-                  .eq('id', existingExpId)
-                  .single();
 
                 if (fetchedExp) {
                   setExpenses(prev => {
@@ -1991,10 +1996,10 @@ export function ExpenseManager({
           const isApproved = isAdmin || (newExpense.approval_status === 'approved');
           if (isApproved) {
             try {
-              const lineAmt = Number(newExpense.amount || formData.amount || 0);
+              const docPayable = calculateCanonicalCashPayable(newExpense);
               const allocAmt = selectedBankAllocationAmount && selectedBankAllocationAmount > 0.01
-                ? selectedBankAllocationAmount
-                : (lineAmt > 0 ? lineAmt : undefined);
+                ? (docPayable > 0.01 ? Math.min(selectedBankAllocationAmount, docPayable) : selectedBankAllocationAmount)
+                : (docPayable > 0.01 ? docPayable : undefined);
 
               await linkBankStatementLine(selectedBankTransactionId, 'expense', newExpense.id, 'supplier', allocAmt);
               await syncExpenseBankLinks([newExpense.id]);
