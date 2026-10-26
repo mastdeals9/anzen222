@@ -3992,24 +3992,11 @@ export function BankReconciliationEnhanced({
               Clear Filters
             </button>
           )}
-
-          {/* Auto Match Button */}
-          <button
-            type="button"
-            onClick={() => { void autoMatchTransactions(); }}
-            disabled={!selectedBank || autoMatching}
-            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-semibold shadow-sm whitespace-nowrap"
-            title="Match unlinked transactions to posted finance documents; ambiguous matches remain unlinked"
-            aria-label="Run bank transaction auto-match"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${autoMatching ? 'animate-spin' : ''}`} />
-            {autoMatching ? 'Matching…' : 'Auto-Match'}
-          </button>
         </div>
 
-        {/* Row 2: Status Filter Pills with Accurate Counts */}
+        {/* Row 2: Status Filter Pills with Accurate Counts & Auto-Match */}
         <div className="flex items-center justify-between gap-2 pt-1 border-t border-gray-100 flex-wrap">
-          <div className="flex gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             <button
               onClick={() => setActiveFilter('all')}
               className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
@@ -4049,6 +4036,19 @@ export function BankReconciliationEnhanced({
               }`}
             >
               ✕ Unmatched ({stats.unmatched})
+            </button>
+
+            {/* Auto Match Button beside status filters */}
+            <button
+              type="button"
+              onClick={() => { void autoMatchTransactions(); }}
+              disabled={!selectedBank || autoMatching}
+              className="inline-flex items-center gap-1.5 px-3 py-1 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-semibold shadow-sm whitespace-nowrap ml-1"
+              title="Match unlinked transactions to posted finance documents; ambiguous matches remain unlinked"
+              aria-label="Run bank transaction auto-match"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${autoMatching ? 'animate-spin' : ''}`} />
+              {autoMatching ? 'Matching…' : 'Auto-Match'}
             </button>
           </div>
 
