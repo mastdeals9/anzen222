@@ -200,6 +200,7 @@ export function Sales() {
   const { profile } = useAuth();
   const { navigationData, clearNavigationData, setCurrentPage } = useNavigation();
   const { dateRange } = useFinance();
+  const isFinancialEditor = profile?.role === 'admin' || profile?.role === 'accounts';
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -218,6 +219,7 @@ export function Sales() {
   const [modalOpen, setModalOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<SalesInvoice | null>(null);
+  const isEditingPosted = Boolean(editingInvoice && isPostedInvoice(editingInvoice));
   const [selectedInvoice, setSelectedInvoice] = useState<SalesInvoice | null>(null);
   const [selectedFlyChallan, setSelectedFlyChallan] = useState<any | null>(null);
   const [linkedSOPreview, setLinkedSOPreview] = useState<any | null>(null);
@@ -1360,6 +1362,72 @@ export function Sales() {
       let invoice: any;
 
       if (editingInvoice) {
+        if (isPostedInvoice(editingInvoice)) {
+          if (!isFinancialEditor) {
+            showToast({
+              type: 'error',
+              title: 'Permission Denied',
+              message: 'Only Admin and Accounts can edit financially posted invoices.',
+            });
+            return;
+          }
+
+          // Controlled posted invoice adjustment:
+          // Keep original journal entries, payments, products, batches, and DC links intact.
+          // Recalculate financial totals consistently.
+          const subtotal = validItems.length > 0
+            ? items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0)
+            : Number(editingInvoice.subtotal || 0);
+          const taxAmount = validItems.length > 0
+            ? items.reduce((sum, item) => sum + (item.quantity * item.unit_price * (item.tax_rate / 100)), 0)
+            : Number(editingInvoice.tax_amount || 0);
+          const stampDuty = Number(formData.stamp_duty_amount) || 0;
+          const discount = Number(formData.discount) || 0;
+          const total = subtotal + taxAmount - discount + stampDuty;
+
+          const currentPaid = Number(editingInvoice.paid_amount || 0);
+          const newBalance = Math.max(0, total - currentPaid);
+          let nextPaymentStatus: 'pending' | 'partial' | 'paid' = 'pending';
+          if (newBalance <= 0.01 && currentPaid > 0) {
+            nextPaymentStatus = 'paid';
+          } else if (currentPaid > 0.01) {
+            nextPaymentStatus = 'partial';
+          } else {
+            nextPaymentStatus = 'pending';
+          }
+
+          const { error: updateError } = await supabase
+            .from('sales_invoices')
+            .update({
+              stamp_duty_amount: stampDuty,
+              total_amount: total,
+              subtotal,
+              tax_amount: taxAmount,
+              discount_amount: discount,
+              due_date: dueDate.toISOString().split('T')[0],
+              payment_terms_days: paymentTermsDays,
+              po_number: formData.po_number || null,
+              notes: formData.notes || null,
+              payment_status: nextPaymentStatus,
+              balance_amount: newBalance,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', editingInvoice.id);
+
+          if (updateError) throw updateError;
+
+          showToast({
+            type: 'success',
+            title: 'Invoice Updated',
+            message: `Invoice ${editingInvoice.invoice_number} updated successfully.`,
+          });
+
+          await loadInvoices();
+          setModalOpen(false);
+          resetForm();
+          return;
+        }
+
         // HARDENING FIX #1: Use atomic RPC to prevent race conditions
         // All operations (delete + update + insert) happen in single transaction
 
@@ -1383,7 +1451,7 @@ export function Sales() {
             }
           });
 
-        const validItems = Array.from(itemsMap.values());
+        const atomicItems = Array.from(itemsMap.values());
 
         const { data: invoiceId, error: rpcError } = await supabase
           .rpc('update_sales_invoice_atomic', {
@@ -1402,7 +1470,7 @@ export function Sales() {
               payment_terms_days: paymentTermsDays,
               notes: formData.notes || null,
             },
-            p_new_items: validItems,
+            p_new_items: atomicItems,
           });
 
         if (rpcError) throw rpcError;
@@ -1526,11 +1594,12 @@ export function Sales() {
   }, [navigationData, clearNavigationData]);
 
   const handleEdit = async (invoice: SalesInvoice) => {
-    if (isPostedInvoice(invoice)) {
+    const isPosted = isPostedInvoice(invoice);
+    if (isPosted && !isFinancialEditor) {
       showToast({
         type: 'warning',
-        title: 'Invoice Posted',
-        message: 'Financially posted invoices cannot be edited directly. Please use Credit Notes for adjustments or returns.',
+        title: 'Permission Denied',
+        message: 'Only Admin and Accounts can edit financially posted invoices.',
       });
       return;
     }
@@ -1540,7 +1609,7 @@ export function Sales() {
       customer_id: invoice.customer_id,
       invoice_date: invoice.invoice_date,
       payment_terms: String(invoice.payment_terms_days || 30),
-      discount: invoice.discount_amount,
+      discount: invoice.discount_amount || 0,
       stamp_duty_amount: Number(invoice.stamp_duty_amount) || 0,
       delivery_challan_number: invoice.delivery_challan_number || '',
       po_number: invoice.po_number || '',
@@ -1855,27 +1924,25 @@ export function Sales() {
               </button>
               {canManage && (
                 <>
+                  <button
+                    onClick={() => handleEdit(invoice)}
+                    className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
+                    title={t('common.edit')}
+                  >
+                    <Edit className="w-4 h-4" />
+                  </button>
                   {!isPostedInvoice(invoice) ? (
-                    <>
-                      <button
-                        onClick={() => handleEdit(invoice)}
-                        className="p-1 text-indigo-600 hover:bg-indigo-50 rounded"
-                        title={t('common.edit')}
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(invoice.id)}
-                        className="p-1 text-red-600 hover:bg-red-50 rounded"
-                        title={t('common.delete')}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </>
+                    <button
+                      onClick={() => handleDelete(invoice.id)}
+                      className="p-1 text-red-600 hover:bg-red-50 rounded"
+                      title={t('common.delete')}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   ) : (
                     <span
                       className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded cursor-help"
-                      title="Financially posted invoice — direct editing locked. Use Credit Notes for adjustments."
+                      title="Financially posted invoice — product lines & delivery challans locked. Stamp duty, terms, and notes can be edited."
                     >
                       <Lock className="w-3 h-3 text-gray-400" />
                       Posted
@@ -1893,10 +1960,19 @@ export function Sales() {
             setModalOpen(false);
             resetForm();
           }}
-          title={editingInvoice ? t('sales.editInvoice') : t('sales.createInvoice')}
+          title={editingInvoice ? `${isEditingPosted ? 'Edit Invoice (Posted)' : t('sales.editInvoice')}: ${editingInvoice.invoice_number}` : t('sales.createInvoice')}
           size="xl"
         >
           <form onSubmit={handleSubmit} className="space-y-3">
+            {isEditingPosted && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-start gap-2">
+                <Lock className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold text-amber-900">Financially Posted Invoice — Controlled Correction</div>
+                  <div>Customer, products, batches, and Delivery Challan links are locked to preserve accounting and inventory history. You can adjust Bea Meterai, Due Date / Terms, PO Number, and Notes.</div>
+                </div>
+              </div>
+            )}
             <div className="space-y-2">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
@@ -1942,52 +2018,72 @@ export function Sales() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Customer *</label>
-                  <SearchableSelect
-                    value={formData.customer_id}
-                    onChange={(customerId) => {
-                      setFormData({ ...formData, customer_id: customerId });
-                      setSelectedChallanId('');
-                      setPendingChallans([]);
-                      setSelectedDCIds([]);
-                      setSelectedSOId('');
-                      setSoAutoLinked(false);
-                      setCustomerSalesOrders([]);
-                      setItems([{
-                        product_id: '',
-                        batch_id: null,
-                        quantity: 1,
-                        unit_price: 0,
-                        tax_rate: 11,
-                        total: 0,
-                      }]);
-                      if (customerId) {
-                        loadPendingDCOptions(customerId);
-                        loadCustomerSalesOrders(customerId);
-                      } else {
-                        setPendingDCOptions([]);
+                  {isEditingPosted ? (
+                    <input
+                      type="text"
+                      value={customers.find(c => c.id === formData.customer_id)?.company_name || editingInvoice?.customers?.company_name || 'Customer'}
+                      className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded bg-gray-100 text-gray-700 font-medium cursor-not-allowed"
+                      readOnly
+                      disabled
+                    />
+                  ) : (
+                    <SearchableSelect
+                      value={formData.customer_id}
+                      onChange={(customerId) => {
+                        setFormData({ ...formData, customer_id: customerId });
+                        setSelectedChallanId('');
+                        setPendingChallans([]);
+                        setSelectedDCIds([]);
+                        setSelectedSOId('');
+                        setSoAutoLinked(false);
                         setCustomerSalesOrders([]);
-                      }
-                    }}
-                    options={customers.map(c => ({ value: c.id, label: c.company_name }))}
-                    placeholder="Select Customer"
-                    className="text-sm"
-                    required
-                  />
+                        setItems([{
+                          product_id: '',
+                          batch_id: null,
+                          quantity: 1,
+                          unit_price: 0,
+                          tax_rate: 11,
+                          total: 0,
+                        }]);
+                        if (customerId) {
+                          loadPendingDCOptions(customerId);
+                          loadCustomerSalesOrders(customerId);
+                        } else {
+                          setPendingDCOptions([]);
+                          setCustomerSalesOrders([]);
+                        }
+                      }}
+                      options={customers.map(c => ({ value: c.id, label: c.company_name }))}
+                      placeholder="Select Customer"
+                      className="text-sm"
+                      required
+                    />
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Delivery Challans</label>
-                  <DCMultiSelect
-                    options={pendingDCOptions}
-                    selectedDCIds={selectedDCIds}
-                    onChange={(ids) => {
-                      if (ids.length === 0) {
-                        setSoAutoLinked(false);
-                        setSelectedSOId('');
-                      }
-                      void handleDCMultiSelectChange(ids);
-                    }}
-                    placeholder="Select DCs"
-                  />
+                  {isEditingPosted ? (
+                    <input
+                      type="text"
+                      value={editingInvoice?.delivery_challan_number || (editingInvoice?.linked_challans?.map(c => c.challan_number).join(', ')) || 'Linked Delivery Challans'}
+                      className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded bg-gray-100 text-gray-700 font-medium cursor-not-allowed"
+                      readOnly
+                      disabled
+                    />
+                  ) : (
+                    <DCMultiSelect
+                      options={pendingDCOptions}
+                      selectedDCIds={selectedDCIds}
+                      onChange={(ids) => {
+                        if (ids.length === 0) {
+                          setSoAutoLinked(false);
+                          setSelectedSOId('');
+                        }
+                        void handleDCMultiSelectChange(ids);
+                      }}
+                      placeholder="Select DCs"
+                    />
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">PO Number</label>
@@ -2117,14 +2213,18 @@ export function Sales() {
 
             <div className="border-t pt-3">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs font-semibold text-gray-900">Line Items</h4>
-                <button
-                  type="button"
-                  onClick={addManualItem}
-                  className="text-xs text-blue-600 hover:text-blue-700 font-medium"
-                >
-                  + Add Manual Item
-                </button>
+                <h4 className="text-xs font-semibold text-gray-900">
+                  Line Items {isEditingPosted && <span className="text-[11px] font-normal text-amber-700">(Locked to protect inventory & challan links)</span>}
+                </h4>
+                {!isEditingPosted && (
+                  <button
+                    type="button"
+                    onClick={addManualItem}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    + Add Manual Item
+                  </button>
+                )}
               </div>
 
               <div className="space-y-1.5">
@@ -2155,7 +2255,7 @@ export function Sales() {
                             </span>
                           )}
                         </div>
-                        {!isFromDC && items.length > 1 && (
+                        {!isFromDC && !isEditingPosted && items.length > 1 && (
                           <button
                             type="button"
                             onClick={() => removeItem(index)}
@@ -2173,7 +2273,7 @@ export function Sales() {
                             value={item.product_id}
                             onChange={(e) => updateItemTotal(index, { ...item, product_id: e.target.value, batch_id: null })}
                             className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                            disabled={isFromDC}
+                            disabled={isFromDC || isEditingPosted}
                             required
                           >
                             <option value="">Select Product</option>
@@ -2196,7 +2296,7 @@ export function Sales() {
                               updateItemTotal(index, { ...item, batch_id: batchId, unit_price: suggested });
                             }}
                             className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                            disabled={!item.product_id || selectedChallanId !== '' || isFromDC}
+                            disabled={!item.product_id || selectedChallanId !== '' || isFromDC || isEditingPosted}
                           >
                             <option value="">Select Batch</option>
                             {/* Show only batches with stock > 0 for manual selection */}
@@ -2223,6 +2323,7 @@ export function Sales() {
                           min="0.001"
                           step="0.001"
                           placeholder="0.25"
+                          disabled={isEditingPosted}
                         />
                       </div>
 
@@ -2235,6 +2336,7 @@ export function Sales() {
                           required
                           min="0"
                           placeholder="0"
+                          disabled={isEditingPosted}
                         />
                       </div>
 
@@ -2247,6 +2349,7 @@ export function Sales() {
                           className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                           min="0"
                           placeholder="11"
+                          disabled={isEditingPosted}
                         />
                       </div>
 
