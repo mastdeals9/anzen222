@@ -3711,7 +3711,7 @@ export function ExpenseManager({
                                         ? 'Not linked to a bank transaction · Click to link'
                                         : 'Bank-link status unavailable · Click to check details'
                                 }
-                                className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${
+                                className={`no-compact !p-0 inline-flex !h-6 !w-6 !min-h-[24px] !min-w-[24px] items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${
                                   expenseLinkStatus === 'linked'
                                     ? 'text-green-700 hover:bg-green-50'
                                     : expenseLinkStatus === 'partial'
@@ -3721,7 +3721,7 @@ export function ExpenseManager({
                                         : 'text-gray-400 hover:bg-gray-100'
                                 }`}
                               >
-                                <Link2 className="w-3.5 h-3.5" />
+                                <Link2 className="w-3.5 h-3.5 shrink-0" />
                               </button>
                             );
                           })()}
