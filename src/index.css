@@ -175,7 +175,7 @@
   /* Finance keeps these guarantees scoped to its own workspace. Legacy
      screens can retain their layout, while shared controls still meet the
      same readable production baseline as FinanceButton/FinanceTable. */
-  .finance-ui button {
+  .finance-ui button:not(.no-compact) {
     min-height: 38px;
     white-space: nowrap;
   }

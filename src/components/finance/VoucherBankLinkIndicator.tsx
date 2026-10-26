@@ -74,20 +74,20 @@ export function VoucherBankLinkIndicator({
 
   switch (status) {
     case 'linked':
-      iconElement = <Link2 className="w-3.5 h-3.5" />;
+      iconElement = <Link2 className="w-3.5 h-3.5 shrink-0" />;
       buttonClasses = 'text-green-700 hover:bg-green-50';
       break;
     case 'partial':
-      iconElement = <Link2 className="w-3.5 h-3.5" />;
+      iconElement = <Link2 className="w-3.5 h-3.5 shrink-0" />;
       buttonClasses = 'text-amber-700 hover:bg-amber-50';
       break;
     case 'needs_review':
-      iconElement = <AlertTriangle className="w-3.5 h-3.5" />;
+      iconElement = <AlertTriangle className="w-3.5 h-3.5 shrink-0" />;
       buttonClasses = 'text-amber-600 hover:bg-amber-50';
       break;
     case 'unlinked':
     default:
-      iconElement = <Unlink className="w-3.5 h-3.5" />;
+      iconElement = <Unlink className="w-3.5 h-3.5 shrink-0" />;
       buttonClasses = 'text-gray-400 hover:text-red-600 hover:bg-red-50';
       break;
   }
@@ -108,7 +108,7 @@ export function VoucherBankLinkIndicator({
           e.stopPropagation();
           setIsOpen(prev => !prev);
         }}
-        className={`inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${buttonClasses}`}
+        className={`no-compact !p-0 inline-flex h-6 w-6 items-center justify-center rounded transition-colors focus:outline-none focus:ring-2 focus:ring-blue-300 ${buttonClasses}`}
       >
         {iconElement}
       </button>
