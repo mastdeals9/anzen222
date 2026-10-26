@@ -43,6 +43,7 @@ interface InvoiceViewProps {
     due_date: string;
     subtotal: number;
     tax_amount: number;
+    stamp_duty_amount?: number | null;
     discount_amount: number;
     total_amount: number;
     payment_status: 'pending' | 'partial' | 'paid';
@@ -488,6 +489,18 @@ export function InvoiceView({ invoice, items, onClose, companyProfile }: Invoice
                     <span className="font-bold">VAT (PPN) 11%</span>
                     <span className="font-bold">{formatCurrency(invoice.tax_amount)}</span>
                   </div>
+                  {Number(invoice.discount_amount || 0) > 0 && (
+                    <div className="flex justify-between border-t border-black py-1 print:py-0.5 text-red-600">
+                      <span className="font-bold">{language === 'id' ? 'Diskon' : 'Discount'}</span>
+                      <span className="font-bold">-{formatCurrency(invoice.discount_amount)}</span>
+                    </div>
+                  )}
+                  {Number(invoice.stamp_duty_amount || 0) > 0 && (
+                    <div className="flex justify-between border-t border-black py-1 print:py-0.5">
+                      <span className="font-bold">Bea Meterai</span>
+                      <span className="font-bold">{formatCurrency(invoice.stamp_duty_amount)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between border-t-2 border-black py-1 print:py-0.5">
                     <span className="font-bold">{language === 'id' ? 'Grand Total' : 'Grand Total'}</span>
                     <span className="font-bold text-sm print:text-xs">{formatCurrency(invoice.total_amount)}</span>
