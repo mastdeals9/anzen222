@@ -39,16 +39,17 @@ import type { BankReconciliationExpensePrefill } from '../components/finance/Exp
 import type { BankReconciliationReceiptPrefill } from '../components/finance/ReceiptVoucherManager';
 const FXReport = lazy(() => import('../components/finance/FXReport').then(m => ({ default: m.FXReport })));
 const FXBusinessDashboard = lazy(() => import('../components/finance/FXBusinessDashboard').then(m => ({ default: m.FXBusinessDashboard })));
+const BpjsRegisterManager = lazy(() => import('../components/finance/BpjsRegisterManager').then(m => ({ default: m.BpjsRegisterManager })));
 
 type FinanceTab =
   | 'purchase' | 'receipt' | 'payment' | 'journal' | 'contra' | 'expenses' | 'petty_cash'
-  | 'ledger' | 'journal_register' | 'bank_ledger' | 'party_ledger' | 'bank_recon'
+  | 'ledger' | 'journal_register' | 'bank_ledger' | 'party_ledger' | 'bank_recon' | 'bpjs_register'
   | 'trial_balance' | 'pnl' | 'balance_sheet' | 'receivables' | 'payables' | 'ageing' | 'tax' | 'ca_reports' | 'fx_dashboard' | 'fx_report' | 'integrity_monitor' | 'exception_correction'
   | 'coa' | 'expense_categories' | 'customers' | 'suppliers' | 'products' | 'banks' | 'staff_master' | 'utility_master' | 'payee_master';
 
 const FINANCE_TABS: readonly FinanceTab[] = [
   'purchase', 'receipt', 'payment', 'journal', 'contra', 'expenses', 'petty_cash',
-  'ledger', 'journal_register', 'bank_ledger', 'party_ledger', 'bank_recon',
+  'ledger', 'journal_register', 'bank_ledger', 'party_ledger', 'bank_recon', 'bpjs_register',
   'trial_balance', 'pnl', 'balance_sheet', 'receivables', 'payables', 'ageing', 'tax', 'ca_reports', 'fx_dashboard', 'fx_report', 'integrity_monitor', 'exception_correction',
   'coa', 'expense_categories', 'customers', 'suppliers', 'products', 'banks', 'staff_master', 'utility_master', 'payee_master',
 ];
@@ -57,7 +58,7 @@ const DEFAULT_FINANCE_TAB: FinanceTab = 'purchase';
 const FINANCE_ROUTE_BY_TAB: Record<FinanceTab, string> = {
   purchase: 'purchase', receipt: 'receipt', payment: 'payment', journal: 'journal', contra: 'fund-transfer',
   expenses: 'expenses', petty_cash: 'petty-cash', ledger: 'ledger', journal_register: 'journal-register',
-  bank_ledger: 'bank-ledger', party_ledger: 'party-ledger', bank_recon: 'bank-reconciliation',
+  bank_ledger: 'bank-ledger', party_ledger: 'party-ledger', bank_recon: 'bank-reconciliation', bpjs_register: 'bpjs-register',
   trial_balance: 'trial-balance', pnl: 'profit-and-loss', balance_sheet: 'balance-sheet', receivables: 'receivables',
   payables: 'payables', ageing: 'ageing', tax: 'tax', ca_reports: 'ca-reports', fx_dashboard: 'fx-dashboard', fx_report: 'fx-report', integrity_monitor: 'integrity-monitor',
   exception_correction: 'exception-correction', coa: 'chart-of-accounts', customers: 'customers', suppliers: 'suppliers',
@@ -104,6 +105,7 @@ const getFinanceMenu = (t: TFunction): MenuGroup[] => [
       { id: 'bank_ledger', label: t.finance.bankLedger },
       { id: 'party_ledger', label: t.finance.partyLedger },
       { id: 'bank_recon', label: t.finance.bankReconciliation },
+      { id: 'bpjs_register', label: 'BPJS Register' },
     ]
   },
   {
@@ -524,6 +526,8 @@ function FinanceContent() {
         return <SuppliersManager canManage={canManage} />;
       case 'banks':
         return <BankAccountsManager canManage={canManage} />;
+      case 'bpjs_register':
+        return <BpjsRegisterManager canManage={canManage} />;
       case 'staff_master':
         return <StaffMasterManager canManage={canManage} />;
       case 'payee_master':

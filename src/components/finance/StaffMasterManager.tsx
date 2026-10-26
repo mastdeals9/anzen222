@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import {
-  Plus, Search, UploadCloud, FileText, Trash2, Download, Paperclip, ExternalLink, Loader2
+  Plus, Search, UploadCloud, FileText, Trash2, Download, Paperclip, ExternalLink, Loader2,
+  ShieldCheck, AlertTriangle
 } from 'lucide-react';
 import { FinanceModal } from './FinanceModal';
 import { MoneyInput } from '../MoneyInput';
@@ -38,6 +39,24 @@ interface Staff {
   pph21_applicable: boolean;
   pph21_method: 'percentage' | 'manual';
   pph21_percentage: number;
+  bpjs_applicable?: boolean;
+  bpjs_kpj_number?: string | null;
+  bpjs_enrollment_status?: 'active' | 'suspended' | 'terminated';
+  bpjs_enrollment_start_date?: string | null;
+  bpjs_enrollment_end_date?: string | null;
+  bpjs_wage_basis?: number | null;
+  bpjs_program_jht?: boolean;
+  bpjs_program_jkk?: boolean;
+  bpjs_program_jkm?: boolean;
+  bpjs_program_jp?: boolean;
+  bpjs_jht_employee_rate?: number;
+  bpjs_jht_employer_rate?: number;
+  bpjs_jkk_employer_rate?: number;
+  bpjs_jkm_employer_rate?: number;
+  bpjs_jp_employee_rate?: number;
+  bpjs_jp_employer_rate?: number;
+  bpjs_notes?: string | null;
+  bpjs_document_urls?: string[] | null;
   default_payment_method: 'cash' | 'bank_transfer' | 'check' | 'giro' | 'other';
   status: 'active' | 'inactive';
   notes: string | null;
@@ -59,6 +78,7 @@ export function StaffMasterManager({ canManage }: Props) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Staff | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingBpjsFiles, setPendingBpjsFiles] = useState<File[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [form, setForm] = useState({
@@ -75,6 +95,24 @@ export function StaffMasterManager({ canManage }: Props) {
     pph21_applicable: false,
     pph21_method: 'percentage' as Staff['pph21_method'],
     pph21_percentage: 0,
+    bpjs_applicable: false,
+    bpjs_kpj_number: '',
+    bpjs_enrollment_status: 'active' as 'active' | 'suspended' | 'terminated',
+    bpjs_enrollment_start_date: '',
+    bpjs_enrollment_end_date: '',
+    bpjs_wage_basis: 0,
+    bpjs_program_jht: true,
+    bpjs_program_jkk: true,
+    bpjs_program_jkm: true,
+    bpjs_program_jp: false,
+    bpjs_jht_employee_rate: 2.0,
+    bpjs_jht_employer_rate: 3.7,
+    bpjs_jkk_employer_rate: 0.24,
+    bpjs_jkm_employer_rate: 0.30,
+    bpjs_jp_employee_rate: 0.0,
+    bpjs_jp_employer_rate: 0.0,
+    bpjs_notes: '',
+    bpjs_document_urls: [] as string[],
     default_payment_method: 'bank_transfer' as Staff['default_payment_method'],
     status: 'active' as 'active' | 'inactive',
     notes: '',
@@ -144,12 +182,31 @@ export function StaffMasterManager({ canManage }: Props) {
   const reset = () => {
     setEditing(null);
     setPendingFiles([]);
+    setPendingBpjsFiles([]);
     setForm({
       full_name: '', employee_code: '', department: '',
       default_gl_code: '', default_gl_name: '', default_gl_account_id: '',
       nik: '', npwp: '', status: 'active', notes: '',
       monthly_salary: 0, salary_type: 'monthly', pph21_applicable: false,
       pph21_method: 'percentage', pph21_percentage: 0, default_payment_method: 'bank_transfer',
+      bpjs_applicable: false,
+      bpjs_kpj_number: '',
+      bpjs_enrollment_status: 'active',
+      bpjs_enrollment_start_date: '',
+      bpjs_enrollment_end_date: '',
+      bpjs_wage_basis: 0,
+      bpjs_program_jht: true,
+      bpjs_program_jkk: true,
+      bpjs_program_jkm: true,
+      bpjs_program_jp: false,
+      bpjs_jht_employee_rate: 2.0,
+      bpjs_jht_employer_rate: 3.7,
+      bpjs_jkk_employer_rate: 0.24,
+      bpjs_jkm_employer_rate: 0.30,
+      bpjs_jp_employee_rate: 0.0,
+      bpjs_jp_employer_rate: 0.0,
+      bpjs_notes: '',
+      bpjs_document_urls: [],
       document_urls: [],
     });
   };
@@ -157,6 +214,7 @@ export function StaffMasterManager({ canManage }: Props) {
   const openEdit = (r: Staff) => {
     setEditing(r);
     setPendingFiles([]);
+    setPendingBpjsFiles([]);
     setForm({
       full_name: r.full_name,
       employee_code: r.employee_code || '',
@@ -171,6 +229,24 @@ export function StaffMasterManager({ canManage }: Props) {
       pph21_applicable: Boolean(r.pph21_applicable),
       pph21_method: r.pph21_method || 'percentage',
       pph21_percentage: Number(r.pph21_percentage || 0),
+      bpjs_applicable: Boolean(r.bpjs_applicable),
+      bpjs_kpj_number: r.bpjs_kpj_number || '',
+      bpjs_enrollment_status: r.bpjs_enrollment_status || 'active',
+      bpjs_enrollment_start_date: r.bpjs_enrollment_start_date || '',
+      bpjs_enrollment_end_date: r.bpjs_enrollment_end_date || '',
+      bpjs_wage_basis: r.bpjs_wage_basis ? Number(r.bpjs_wage_basis) : Number(r.monthly_salary || 0),
+      bpjs_program_jht: r.bpjs_program_jht !== false,
+      bpjs_program_jkk: r.bpjs_program_jkk !== false,
+      bpjs_program_jkm: r.bpjs_program_jkm !== false,
+      bpjs_program_jp: Boolean(r.bpjs_program_jp),
+      bpjs_jht_employee_rate: Number(r.bpjs_jht_employee_rate ?? 2.0),
+      bpjs_jht_employer_rate: Number(r.bpjs_jht_employer_rate ?? 3.7),
+      bpjs_jkk_employer_rate: Number(r.bpjs_jkk_employer_rate ?? 0.24),
+      bpjs_jkm_employer_rate: Number(r.bpjs_jkm_employer_rate ?? 0.30),
+      bpjs_jp_employee_rate: Number(r.bpjs_jp_employee_rate ?? 0.0),
+      bpjs_jp_employer_rate: Number(r.bpjs_jp_employer_rate ?? 0.0),
+      bpjs_notes: r.bpjs_notes || '',
+      bpjs_document_urls: r.bpjs_document_urls || [],
       default_payment_method: r.default_payment_method || 'bank_transfer',
       status: r.status,
       notes: r.notes || '',
@@ -195,6 +271,13 @@ export function StaffMasterManager({ canManage }: Props) {
         finalDocUrls = [...finalDocUrls, ...uploadedUrls];
       }
 
+      let finalBpjsDocUrls = [...(form.bpjs_document_urls || [])];
+      if (pendingBpjsFiles.length > 0) {
+        showToast({ type: 'info', title: 'Uploading BPJS documents', message: `Uploading ${pendingBpjsFiles.length} BPJS document(s)...` });
+        const uploadedBpjsUrls = await uploadFinanceDocuments(pendingBpjsFiles, 'staff_bpjs');
+        finalBpjsDocUrls = [...finalBpjsDocUrls, ...uploadedBpjsUrls];
+      }
+
       const payload: Partial<Staff> = {
         full_name: form.full_name.trim(),
         employee_code: form.employee_code.trim() || null,
@@ -208,6 +291,24 @@ export function StaffMasterManager({ canManage }: Props) {
         pph21_applicable: form.pph21_applicable,
         pph21_method: form.pph21_method,
         pph21_percentage: form.pph21_applicable ? form.pph21_percentage : 0,
+        bpjs_applicable: form.bpjs_applicable,
+        bpjs_kpj_number: form.bpjs_kpj_number.trim() || null,
+        bpjs_enrollment_status: form.bpjs_enrollment_status,
+        bpjs_enrollment_start_date: form.bpjs_enrollment_start_date || null,
+        bpjs_enrollment_end_date: form.bpjs_enrollment_end_date || null,
+        bpjs_wage_basis: form.bpjs_applicable ? (form.bpjs_wage_basis || form.monthly_salary) : null,
+        bpjs_program_jht: form.bpjs_program_jht,
+        bpjs_program_jkk: form.bpjs_program_jkk,
+        bpjs_program_jkm: form.bpjs_program_jkm,
+        bpjs_program_jp: form.bpjs_program_jp,
+        bpjs_jht_employee_rate: form.bpjs_jht_employee_rate,
+        bpjs_jht_employer_rate: form.bpjs_jht_employer_rate,
+        bpjs_jkk_employer_rate: form.bpjs_jkk_employer_rate,
+        bpjs_jkm_employer_rate: form.bpjs_jkm_employer_rate,
+        bpjs_jp_employee_rate: form.bpjs_jp_employee_rate,
+        bpjs_jp_employer_rate: form.bpjs_jp_employer_rate,
+        bpjs_notes: form.bpjs_notes.trim() || null,
+        bpjs_document_urls: finalBpjsDocUrls,
         default_payment_method: form.default_payment_method,
         status: form.status,
         notes: form.notes.trim() || null,
@@ -303,6 +404,35 @@ export function StaffMasterManager({ canManage }: Props) {
                 {!row.nik && !row.npwp && <span className="text-gray-400">—</span>}
               </div>
             ),
+          },
+          {
+            header: 'BPJS TK',
+            cell: (row) => {
+              if (!row.bpjs_applicable) {
+                return <span className="text-xs text-gray-400">Not enrolled</span>;
+              }
+              const wage = Number(row.bpjs_wage_basis || row.monthly_salary || 0);
+              const jhtEmp = wage * ((row.bpjs_jht_employee_rate ?? 2.0) / 100);
+              const hasDiscrepancy = Boolean(row.bpjs_wage_basis && Number(row.bpjs_wage_basis) !== Number(row.monthly_salary));
+
+              return (
+                <div className="text-xs space-y-0.5">
+                  <div className="flex items-center gap-1">
+                    <span className="font-mono font-medium text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded text-[11px] border border-emerald-200">
+                      KPJ: {row.bpjs_kpj_number || 'Enrolled'}
+                    </span>
+                    {hasDiscrepancy && (
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-1 py-0.2 rounded border border-amber-200" title={`Wage Discrepancy: BPJS Rp ${wage.toLocaleString('id-ID')} vs Salary Rp ${Number(row.monthly_salary).toLocaleString('id-ID')}`}>
+                        Wage diff
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-gray-600 font-mono">
+                    JHT 2%: Rp {Math.round(jhtEmp).toLocaleString('id-ID')}
+                  </div>
+                </div>
+              );
+            },
           },
           {
             header: 'KYC / Docs',
@@ -458,6 +588,317 @@ export function StaffMasterManager({ canManage }: Props) {
                   className={SAP_INPUT} />
               </SapField>
             </SapRow>
+
+            {/* BPJS Ketenagakerjaan Section */}
+            <div className="pt-3 border-t border-gray-200 space-y-3 bg-emerald-50/20 p-3 rounded-xl border border-emerald-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                    BPJS Ketenagakerjaan (Avira Parama Farma)
+                  </h3>
+                  <p className="text-[11px] text-gray-500 mt-0.5">
+                    Configure statutory enrollment, reported wage basis, and contribution rates (NPP: 26719331).
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 text-xs font-medium text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    name="bpjs_applicable"
+                    checked={form.bpjs_applicable}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setForm(prev => ({
+                        ...prev,
+                        bpjs_applicable: checked,
+                        bpjs_wage_basis: checked ? (prev.bpjs_wage_basis || prev.monthly_salary) : prev.bpjs_wage_basis,
+                      }));
+                    }}
+                    className="w-4 h-4 text-emerald-600 border-gray-300 rounded focus:ring-emerald-500"
+                  />
+                  <span>BPJS Ketenagakerjaan Applicable</span>
+                </label>
+              </div>
+
+              {form.bpjs_applicable && (
+                <div className="space-y-3 pt-2">
+                  <SapRow>
+                    <SapField label="Participant No (KPJ)" span={4}>
+                      <input
+                        name="bpjs_kpj_number"
+                        aria-label="BPJS KPJ Number"
+                        value={form.bpjs_kpj_number}
+                        onChange={e => setForm({ ...form, bpjs_kpj_number: e.target.value })}
+                        placeholder="e.g. 26010001"
+                        className={SAP_INPUT + ' !font-mono'}
+                      />
+                    </SapField>
+                    <SapField label="Enrollment Status" span={2}>
+                      <select
+                        name="bpjs_enrollment_status"
+                        value={form.bpjs_enrollment_status}
+                        onChange={e => setForm({ ...form, bpjs_enrollment_status: e.target.value as any })}
+                        className={SAP_INPUT}
+                      >
+                        <option value="active">Active</option>
+                        <option value="suspended">Suspended</option>
+                        <option value="terminated">Terminated</option>
+                      </select>
+                    </SapField>
+                    <SapField label="Enrollment Start" span={3}>
+                      <input
+                        type="date"
+                        name="bpjs_enrollment_start_date"
+                        value={form.bpjs_enrollment_start_date}
+                        onChange={e => setForm({ ...form, bpjs_enrollment_start_date: e.target.value })}
+                        className={SAP_INPUT}
+                      />
+                    </SapField>
+                    <SapField label="Enrollment End" span={3}>
+                      <input
+                        type="date"
+                        name="bpjs_enrollment_end_date"
+                        value={form.bpjs_enrollment_end_date}
+                        onChange={e => setForm({ ...form, bpjs_enrollment_end_date: e.target.value })}
+                        className={SAP_INPUT}
+                      />
+                    </SapField>
+                  </SapRow>
+
+                  <SapRow>
+                    <SapField label="Reported BPJS Wage Basis (Rp)" span={6}>
+                      <MoneyInput
+                        required={form.bpjs_applicable}
+                        value={form.bpjs_wage_basis}
+                        onChange={n => setForm({ ...form, bpjs_wage_basis: n })}
+                        className={SAP_INPUT + ' !text-right !font-mono'}
+                      />
+                      <span className="text-[10px] text-gray-500">
+                        Monthly salary in master is Rp {Number(form.monthly_salary || 0).toLocaleString('id-ID')}
+                      </span>
+                    </SapField>
+                    <SapField label="BPJS Notes / Registration Details" span={6}>
+                      <input
+                        name="bpjs_notes"
+                        value={form.bpjs_notes}
+                        onChange={e => setForm({ ...form, bpjs_notes: e.target.value })}
+                        placeholder="Registration details or branch notes"
+                        className={SAP_INPUT}
+                      />
+                    </SapField>
+                  </SapRow>
+
+                  {/* Discrepancy Alert Banner */}
+                  {Boolean(form.bpjs_wage_basis && Number(form.bpjs_wage_basis) !== Number(form.monthly_salary)) && (
+                    <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="font-semibold">Wage Discrepancy Flagged for Review</div>
+                        <div>
+                          Reported BPJS contribution wage (<strong>Rp {Number(form.bpjs_wage_basis).toLocaleString('id-ID')}</strong>)
+                          differs from Staff Master monthly salary (<strong>Rp {Number(form.monthly_salary).toLocaleString('id-ID')}</strong>).
+                          BPJS employee deductions and employer contributions will be based on the confirmed BPJS wage (Rp {Number(form.bpjs_wage_basis).toLocaleString('id-ID')}).
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Prominent Calculation Summary */}
+                  {(() => {
+                    const wage = Number(form.bpjs_wage_basis || form.monthly_salary || 0);
+                    const empRate = form.bpjs_program_jht ? (form.bpjs_jht_employee_rate ?? 2.0) : 0;
+                    const erJhtRate = form.bpjs_program_jht ? (form.bpjs_jht_employer_rate ?? 3.7) : 0;
+                    const erJkkRate = form.bpjs_program_jkk ? (form.bpjs_jkk_employer_rate ?? 0.24) : 0;
+                    const erJkmRate = form.bpjs_program_jkm ? (form.bpjs_jkm_employer_rate ?? 0.30) : 0;
+                    const erJpRate = form.bpjs_program_jp ? (form.bpjs_jp_employer_rate ?? 0) : 0;
+
+                    const empDeduction = Math.round(wage * empRate / 100);
+                    const erExpense = Math.round(wage * (erJhtRate + erJkkRate + erJkmRate + erJpRate) / 100);
+                    const totalPayable = empDeduction + erExpense;
+
+                    return (
+                      <div className="bg-white rounded-lg p-3 border border-emerald-200 shadow-xs space-y-2">
+                        <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+                          Contribution Preview (Wage Basis: Rp {wage.toLocaleString('id-ID')})
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <div className="bg-blue-50/70 p-2.5 rounded-lg border border-blue-100">
+                            <div className="text-[10px] uppercase font-bold text-blue-700">Employee 2% JHT Deduction</div>
+                            <div className="text-base font-bold font-mono text-blue-900 mt-0.5">
+                              Rp {empDeduction.toLocaleString('id-ID')}
+                            </div>
+                            <div className="text-[10px] text-blue-600 mt-0.5">
+                              Deducted from salary & payslip
+                            </div>
+                          </div>
+
+                          <div className="bg-purple-50/70 p-2.5 rounded-lg border border-purple-100">
+                            <div className="text-[10px] uppercase font-bold text-purple-700">Employer 4.24% Expense</div>
+                            <div className="text-base font-bold font-mono text-purple-900 mt-0.5">
+                              Rp {erExpense.toLocaleString('id-ID')}
+                            </div>
+                            <div className="text-[10px] text-purple-600 mt-0.5">
+                              Company expense (JHT 3.7%, JKK 0.24%, JKM 0.30%)
+                            </div>
+                          </div>
+
+                          <div className="bg-emerald-50/70 p-2.5 rounded-lg border border-emerald-100">
+                            <div className="text-[10px] uppercase font-bold text-emerald-700">Total BPJS Payable</div>
+                            <div className="text-base font-bold font-mono text-emerald-900 mt-0.5">
+                              Rp {totalPayable.toLocaleString('id-ID')}
+                            </div>
+                            <div className="text-[10px] text-emerald-600 mt-0.5">
+                              Combined bill to BPJS TK
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Programs & Rates */}
+                  <div className="bg-gray-50/70 p-2.5 rounded-lg border border-gray-200">
+                    <div className="text-[11px] font-semibold text-gray-700 mb-2">
+                      Program Participation & Determination Rates
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                      <label className="flex items-center gap-1.5 p-1.5 bg-white rounded border border-gray-200">
+                        <input
+                          type="checkbox"
+                          checked={form.bpjs_program_jht}
+                          onChange={e => setForm({ ...form, bpjs_program_jht: e.target.checked })}
+                          className="rounded text-emerald-600"
+                        />
+                        <span>JHT (Emp 2%, Er 3.7%)</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 p-1.5 bg-white rounded border border-gray-200">
+                        <input
+                          type="checkbox"
+                          checked={form.bpjs_program_jkk}
+                          onChange={e => setForm({ ...form, bpjs_program_jkk: e.target.checked })}
+                          className="rounded text-emerald-600"
+                        />
+                        <span>JKK (Er 0.24%)</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 p-1.5 bg-white rounded border border-gray-200">
+                        <input
+                          type="checkbox"
+                          checked={form.bpjs_program_jkm}
+                          onChange={e => setForm({ ...form, bpjs_program_jkm: e.target.checked })}
+                          className="rounded text-emerald-600"
+                        />
+                        <span>JKM (Er 0.30%)</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 p-1.5 bg-white rounded border border-gray-200">
+                        <input
+                          type="checkbox"
+                          checked={form.bpjs_program_jp}
+                          onChange={e => setForm({ ...form, bpjs_program_jp: e.target.checked })}
+                          className="rounded text-emerald-600"
+                        />
+                        <span>JP Pension (0%)</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* BPJS Documents Upload */}
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-gray-700 flex items-center gap-1">
+                        <Paperclip className="w-3 h-3 text-emerald-600" />
+                        BPJS Documents (Membership Card / Determination Letter / Statement)
+                      </span>
+                      <span className="text-[10px] text-gray-500">
+                        {(form.bpjs_document_urls?.length || 0) + pendingBpjsFiles.length} file(s)
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="file"
+                        id="bpjs-doc-upload"
+                        multiple
+                        accept="image/*,.pdf,.doc,.docx"
+                        className="hidden"
+                        onChange={(e) => {
+                          const selected = Array.from(e.target.files || []);
+                          if (selected.length > 0) {
+                            setPendingBpjsFiles(prev => [...prev, ...selected]);
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => document.getElementById('bpjs-doc-upload')?.click()}
+                        className="px-2.5 py-1 text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg border border-emerald-200 flex items-center gap-1.5"
+                      >
+                        <UploadCloud className="w-3.5 h-3.5" />
+                        Attach BPJS Document
+                      </button>
+                    </div>
+
+                    {/* Attached BPJS Files */}
+                    {((form.bpjs_document_urls && form.bpjs_document_urls.length > 0) || pendingBpjsFiles.length > 0) && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        {form.bpjs_document_urls?.map((url, idx) => {
+                          const name = getDocDisplayName(url, idx);
+                          return (
+                            <div key={url} className="flex items-center justify-between p-2 rounded-lg bg-white border border-emerald-200 text-xs">
+                              <span className="truncate max-w-[180px] font-medium text-emerald-900" title={name}>{name}</span>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openStorageDocument(url)}
+                                  className="p-1 text-gray-400 hover:text-indigo-600"
+                                  title="View"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => downloadStorageDocument(url, name)}
+                                  className="p-1 text-gray-400 hover:text-emerald-600"
+                                  title="Download"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setForm(prev => ({
+                                      ...prev,
+                                      bpjs_document_urls: prev.bpjs_document_urls?.filter(u => u !== url) || [],
+                                    }));
+                                  }}
+                                  className="p-1 text-gray-400 hover:text-red-600"
+                                  title="Remove"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {pendingBpjsFiles.map((file, idx) => (
+                          <div key={`${file.name}-${idx}`} className="flex items-center justify-between p-2 rounded-lg bg-emerald-50/60 border border-emerald-200 text-xs">
+                            <span className="truncate max-w-[180px] font-medium text-emerald-800">{file.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => setPendingBpjsFiles(prev => prev.filter((_, i) => i !== idx))}
+                              className="p-1 text-gray-400 hover:text-red-600"
+                              title="Cancel"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Identity & HR Documents (KTP, NPWP, Contract, Bank passbook) */}
             <div className="pt-3 border-t border-gray-200 space-y-3">
