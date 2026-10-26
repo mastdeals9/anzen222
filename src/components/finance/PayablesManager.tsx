@@ -80,6 +80,8 @@ interface OutstandingPurchaseInvoice {
   paid_amount: number;
   balance_amount: number;
   currency: string;
+  exchange_rate?: number;
+  status?: string;
   suppliers?: { company_name: string } | null;
 }
 
@@ -149,8 +151,8 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
     try {
       const { data, error } = await supabase
         .from('purchase_invoices')
-        .select('id, invoice_number, invoice_date, due_date, total_amount, paid_amount, balance_amount, currency, suppliers(company_name)')
-        .in('status', ['pending', 'partial'])
+        .select('id, invoice_number, invoice_date, due_date, total_amount, paid_amount, balance_amount, currency, exchange_rate, status, suppliers(company_name)')
+        .in('status', ['unpaid', 'pending', 'partial'])
         .gt('balance_amount', 0)
         .lte('invoice_date', dateRange.endDate)
         .order('due_date', { ascending: true });
@@ -502,7 +504,12 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
     .reduce((sum, b) => sum + b.total_amount, 0);
 
   const totalExpenseBillsPayable = outstandingExpenseBills.reduce((sum, b) => sum + b.balance_amount, 0);
-  const totalPurchaseInvoicesPayable = outstandingPurchaseInvoices.reduce((sum, invoice) => sum + invoice.balance_amount, 0);
+  const totalPurchaseInvoicesPayable = outstandingPurchaseInvoices.reduce((sum, invoice) => {
+    const isUSD = (invoice.currency || 'IDR').toUpperCase() === 'USD';
+    const rate = Number(invoice.exchange_rate) || 1;
+    const functionalBal = isUSD ? Number(invoice.balance_amount || 0) * rate : Number(invoice.balance_amount || 0);
+    return sum + functionalBal;
+  }, 0);
 
   // The AP headline is the canonical as-of view: purchase invoices plus
   // expense bills. Legacy vendor_bills remain available separately and are
@@ -511,18 +518,25 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
 
   const exportPayables = () => {
     const rows = [
-      ...outstandingPurchaseInvoices.map(i => ({
-        Supplier: i.suppliers?.company_name || '', 'Invoice / Expense No.': i.invoice_number,
-        'Document Type': 'Purchase Invoice', 'Invoice Date': i.invoice_date, 'Due Date': i.due_date || '',
-        'Original Amount': Number(i.total_amount), 'Paid Amount': Number(i.paid_amount), 'Outstanding Balance': Number(i.balance_amount),
-        Currency: i.currency || 'IDR', 'Payment Status': Number(i.balance_amount) > 0 && Number(i.paid_amount) > 0 ? 'Partial' : 'Unpaid',
-        'Related Purchase Invoice': i.invoice_number, Reference: i.id,
-      })),
+      ...outstandingPurchaseInvoices.map(i => {
+        const isUSD = (i.currency || 'IDR').toUpperCase() === 'USD';
+        const rate = Number(i.exchange_rate) || 1;
+        const functionalBal = isUSD ? Number(i.balance_amount || 0) * rate : Number(i.balance_amount || 0);
+        return {
+          Supplier: i.suppliers?.company_name || '', 'Invoice / Expense No.': i.invoice_number,
+          'Document Type': 'Purchase Invoice', 'Invoice Date': i.invoice_date, 'Due Date': i.due_date || '',
+          'Original Amount': Number(i.total_amount), 'Paid Amount': Number(i.paid_amount), 'Outstanding Balance': Number(i.balance_amount),
+          Currency: i.currency || 'IDR', 'Exchange Rate': rate, 'Functional Outstanding Balance (IDR)': functionalBal,
+          'Payment Status': Number(i.balance_amount) > 0 && Number(i.paid_amount) > 0 ? 'Partial' : 'Unpaid',
+          'Related Purchase Invoice': i.invoice_number, Reference: i.id,
+        };
+      }),
       ...outstandingExpenseBills.map(e => ({
         Supplier: e.supplier_name || '', 'Invoice / Expense No.': e.invoice_number || e.id,
         'Document Type': 'Supplier Expense', 'Invoice Date': e.invoice_date, 'Due Date': e.due_date || '',
         Category: categoryLabel(e.expense_category), Description: e.description || '', 'Original Amount': Number(e.amount),
         'Paid Amount': Number(e.paid_amount), 'Outstanding Balance': Number(e.balance_amount), Currency: 'IDR',
+        'Exchange Rate': 1, 'Functional Outstanding Balance (IDR)': Number(e.balance_amount),
         'Payment Status': Number(e.paid_amount) > 0 ? 'Partial' : 'Unpaid', 'Days Overdue': Number(e.days_overdue || 0),
         Reference: e.id,
       })),
@@ -771,20 +785,46 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {outstandingPurchaseInvoices.map(invoice => (
-                    <tr key={invoice.id} className="hover:bg-blue-50/40">
-                      <td className="px-1.5 py-1 text-xs text-gray-900">{invoice.suppliers?.company_name || '—'}</td>
-                      <td className="px-1.5 py-1 text-xs font-mono text-gray-700">{invoice.invoice_number}</td>
-                      <td className="px-1.5 py-1 text-xs text-gray-700">{formatDate(invoice.invoice_date)}</td>
-                      <td className="px-1.5 py-1 text-xs text-gray-700">{invoice.due_date ? formatDate(invoice.due_date) : '—'}</td>
-                      <td className="px-1.5 py-1 text-right text-xs text-gray-700">{invoice.total_amount.toLocaleString('id-ID')}</td>
-                      <td className="px-1.5 py-1 text-right text-xs text-green-700">{invoice.paid_amount.toLocaleString('id-ID')}</td>
-                      <td className="px-1.5 py-1 text-right text-xs font-semibold text-red-600">{invoice.balance_amount.toLocaleString('id-ID')}</td>
-                    </tr>
-                  ))}
+                  {outstandingPurchaseInvoices.map(invoice => {
+                    const isUSD = (invoice.currency || 'IDR').toUpperCase() === 'USD';
+                    const rate = Number(invoice.exchange_rate) || 1;
+                    const functionalBal = isUSD ? Number(invoice.balance_amount || 0) * rate : Number(invoice.balance_amount || 0);
+                    return (
+                      <tr key={invoice.id} className="hover:bg-blue-50/40">
+                        <td className="px-1.5 py-1 text-xs text-gray-900">{invoice.suppliers?.company_name || '—'}</td>
+                        <td className="px-1.5 py-1 text-xs font-mono text-gray-700">
+                          {invoice.invoice_number}
+                          {isUSD && (
+                            <span className="ml-1.5 px-1 py-0.2 text-[9px] font-semibold bg-blue-100 text-blue-800 rounded">USD</span>
+                          )}
+                        </td>
+                        <td className="px-1.5 py-1 text-xs text-gray-700">{formatDate(invoice.invoice_date)}</td>
+                        <td className="px-1.5 py-1 text-xs text-gray-700">{invoice.due_date ? formatDate(invoice.due_date) : '—'}</td>
+                        <td className="px-1.5 py-1 text-right text-xs text-gray-700 font-mono">
+                          {isUSD ? `$ ${Number(invoice.total_amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `Rp ${Number(invoice.total_amount).toLocaleString('id-ID')}`}
+                        </td>
+                        <td className="px-1.5 py-1 text-right text-xs text-green-700 font-mono">
+                          {isUSD ? `$ ${Number(invoice.paid_amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `Rp ${Number(invoice.paid_amount).toLocaleString('id-ID')}`}
+                        </td>
+                        <td className="px-1.5 py-1 text-right text-xs font-semibold text-red-600 font-mono">
+                          <div>{isUSD ? `$ ${Number(invoice.balance_amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `Rp ${Number(invoice.balance_amount).toLocaleString('id-ID')}`}</div>
+                          {isUSD && (
+                            <div className="text-[10px] text-gray-500 font-normal">Functional: Rp {Math.round(functionalBal).toLocaleString('id-ID')}</div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
                 <tfoot className="bg-blue-50 border-t border-blue-200">
-                  <tr><td colSpan={6} className="px-1.5 py-1 text-right text-xs font-bold">Purchase invoice balance:</td><td className="px-1.5 py-1 text-right text-xs font-bold text-red-700">{totalPurchaseInvoicesPayable.toLocaleString('id-ID')}</td></tr>
+                  <tr>
+                    <td colSpan={6} className="px-1.5 py-1 text-right text-xs font-bold">
+                      Purchase invoice balance (Functional IDR):
+                    </td>
+                    <td className="px-1.5 py-1 text-right text-xs font-bold text-red-700 font-mono">
+                      Rp {totalPurchaseInvoicesPayable.toLocaleString('id-ID', { maximumFractionDigits: 0 })}
+                    </td>
+                  </tr>
                 </tfoot>
               </table>
             </div>
