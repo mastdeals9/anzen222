@@ -81,18 +81,25 @@ export const formatDateTime = (datetime: string | Date | null | undefined): stri
 };
 
 /**
- * Convert DD/MM/YYYY string to YYYY-MM-DD for input fields
- * @param dateStr - Date string in DD/MM/YYYY format
+ * Convert DD/MM/YYYY string to YYYY-MM-DD for input fields.
+ * Strictly parses DD/MM/YYYY, DD-MM-YYYY, or DD.MM.YYYY to ensure
+ * Indonesian/Commonwealth date format (e.g. 01/10/2026 -> 2026-10-01, NOT 2026-01-10).
+ * @param dateStr - Date string
  * @returns Date string in YYYY-MM-DD format
  */
 export const toInputFormat = (dateStr: string | null | undefined): string => {
   if (!dateStr) return '';
 
-  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr)) {
-    return dateStr.split('T')[0];
+  const trimmed = dateStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
   }
 
-  const match = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+    return trimmed.split('T')[0];
+  }
+
+  const match = trimmed.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/);
   if (!match) return '';
 
   const [, day, month, year] = match;
@@ -103,6 +110,11 @@ export const toInputFormat = (dateStr: string | null | undefined): string => {
 
   return `${year}-${String(monthNum).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
 };
+
+/**
+ * Alias for toInputFormat for semantic clarity in data queries and filtering.
+ */
+export const normalizeDateToIso = toInputFormat;
 
 /**
  * Get current date in YYYY-MM-DD format for input fields

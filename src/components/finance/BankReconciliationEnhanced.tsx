@@ -1,12 +1,13 @@
-import { Fragment, useEffect, useState, useRef } from 'react';
+import { Fragment, useEffect, useState, useRef, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark, FileText, Pencil as Edit, ChevronDown, ChevronRight, Clock, Info, X, Sparkles, Link2 } from 'lucide-react';
+import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark, FileText, Pencil as Edit, ChevronDown, ChevronRight, ChevronLeft, Clock, Info, X, Sparkles, Link2, Search, RotateCcw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { FinanceModal as Modal } from './FinanceModal';
 import { SearchableSelect } from '../SearchableSelect';
 import { MoneyInput } from '../MoneyInput';
 import { useFinance } from '../../contexts/FinanceContext';
 import { useLanguage } from '../../contexts/LanguageContext';
+import { normalizeDateToIso, toInputFormat, formatDate } from '../../utils/dateFormat';
 import { useSupabaseRealtimeChannel } from '../../hooks/useSupabaseRealtimeChannel';
 import { useExpenseCategories } from './useExpenseCategories';
 import { groupExpenseCategories } from './ExpenseCategorySelect';
@@ -310,11 +311,42 @@ export function BankReconciliationEnhanced({
   const [highlightedLineId, setHighlightedLineId] = useState<string | null>(null);
   const [expandedLineIds, setExpandedLineIds] = useState<Set<string>>(new Set());
 
-  // Use master date range from Finance context
-  const { dateRange: financeDateRange } = useFinance();
-  const dateRange = {
-    start: financeDateRange.startDate,
-    end: financeDateRange.endDate,
+  // Use master date range from Finance context, backed by local controls for high visibility & control
+  const { dateRange: financeDateRange, setDateRange } = useFinance();
+  const [localStartDate, setLocalStartDate] = useState(financeDateRange.startDate);
+  const [localEndDate, setLocalEndDate] = useState(financeDateRange.endDate);
+
+  // Search & Pagination controls
+  const [searchTerm, setSearchTerm] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number | 'all'>(50);
+
+  // Sync local controls if master dateRange changes externally
+  useEffect(() => {
+    setLocalStartDate(financeDateRange.startDate);
+    setLocalEndDate(financeDateRange.endDate);
+  }, [financeDateRange.startDate, financeDateRange.endDate]);
+
+  const dateRange = useMemo(() => ({
+    start: normalizeDateToIso(localStartDate) || financeDateRange.startDate,
+    end: normalizeDateToIso(localEndDate) || financeDateRange.endDate,
+  }), [localStartDate, localEndDate, financeDateRange.startDate, financeDateRange.endDate]);
+
+  const handleDateChange = (newStart: string, newEnd: string) => {
+    const s = normalizeDateToIso(newStart) || newStart;
+    const e = normalizeDateToIso(newEnd) || newEnd;
+    setLocalStartDate(s);
+    setLocalEndDate(e);
+    if (s && e) {
+      setDateRange({ startDate: s, endDate: e });
+    }
+  };
+
+  const handleClearFilters = () => {
+    setSearchTerm('');
+    setActiveFilter('all');
+    setCurrentPage(1);
+    setSortConfig(null);
   };
   const [recordingLine, setRecordingLine] = useState<StatementLine | null>(null);
   const [recordModal, setRecordModal] = useState(false);
@@ -748,10 +780,9 @@ export function BankReconciliationEnhanced({
     loadingRequestIdRef.current += 1;
     const currentRequestId = loadingRequestIdRef.current;
     try {
-      // Calculate next day for inclusive end date filtering
-      const endDatePlusOne = new Date(dateRange.end);
-      endDatePlusOne.setDate(endDatePlusOne.getDate() + 1);
-      const endDateStr = endDatePlusOne.toISOString().split('T')[0];
+      // Exact inclusive date boundary filtering normalized to YYYY-MM-DD
+      const startIso = normalizeDateToIso(dateRange.start) || dateRange.start;
+      const endIso = normalizeDateToIso(dateRange.end) || dateRange.end;
 
       const rangeData: any[] = [];
       for (let offset = 0; ; offset += BANK_RECONCILIATION_PAGE_SIZE) {
@@ -760,8 +791,8 @@ export function BankReconciliationEnhanced({
           // perf: projected columns (was select('*'))
           .select('id, bank_account_id, transaction_date, description, reference, currency, debit_amount, credit_amount, running_balance, reconciliation_status, matching_status, manually_unlinked, notes, matched_expense_id, matched_receipt_id, matched_payment_id, matched_fund_transfer_id, matched_entry_id, matched_petty_cash_id, matched_tax_payment_id')
           .eq('bank_account_id', selectedBank)
-          .gte('transaction_date', dateRange.start)
-          .lt('transaction_date', endDateStr)
+          .gte('transaction_date', startIso)
+          .lte('transaction_date', endIso)
           .order('transaction_date', { ascending: false })
           .order('id', { ascending: true })
           .range(offset, offset + BANK_RECONCILIATION_PAGE_SIZE - 1);
@@ -3487,12 +3518,67 @@ export function BankReconciliationEnhanced({
     }
   };
 
-  const filteredLines = statementLines.filter(line => {
-    if (activeFilter === 'all') return true;
-    if (activeFilter === 'unmatched' && line.status === 'partially_reconciled') return true;
-    if (activeFilter === 'matched') return line.status === 'matched' || line.status === 'recorded';
-    return line.status === activeFilter;
-  });
+  const matchesSearch = (line: StatementLine, query: string): boolean => {
+    if (!query) return true;
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+
+    // 1. Description, Reference, Notes
+    if (line.description && line.description.toLowerCase().includes(q)) return true;
+    if (line.reference && line.reference.toLowerCase().includes(q)) return true;
+    if (line.notes && line.notes.toLowerCase().includes(q)) return true;
+
+    // 2. Amount match (handles raw digits, formatted Indonesian Rp, decimals)
+    const cleanNumericQuery = q.replace(/[^0-9]/g, '');
+    if (cleanNumericQuery.length >= 3) {
+      const debitDigits = String(Math.round(Number(line.debit) || 0));
+      const creditDigits = String(Math.round(Number(line.credit) || 0));
+      if (debitDigits.includes(cleanNumericQuery) || creditDigits.includes(cleanNumericQuery)) return true;
+    }
+    const debitFormatted = (Number(line.debit) || 0).toLocaleString('id-ID');
+    const creditFormatted = (Number(line.credit) || 0).toLocaleString('id-ID');
+    if (debitFormatted.includes(q) || creditFormatted.includes(q)) return true;
+
+    // 3. Date match
+    // Matches raw ISO date (2026-10-01), formatted DD/MM/YYYY (01/10/2026), DD-MM-YYYY, or parts
+    if (line.date.includes(q)) return true;
+    const dmy = formatDate(line.date); // e.g. "01/10/2026"
+    if (dmy.includes(q)) return true;
+    const normDate = normalizeDateToIso(q);
+    if (normDate && line.date === normDate) return true;
+
+    // 4. Linked document details
+    if (line.allocations && line.allocations.some(a =>
+      (a.label && a.label.toLowerCase().includes(q)) ||
+      (a.counterparty && a.counterparty.toLowerCase().includes(q)) ||
+      (a.document_type && a.document_type.toLowerCase().includes(q))
+    )) return true;
+
+    if (line.matchedExpense?.voucher_number && line.matchedExpense.voucher_number.toLowerCase().includes(q)) return true;
+    if (line.matchedExpense?.description && line.matchedExpense.description.toLowerCase().includes(q)) return true;
+    if (line.matchedPayment?.voucher_number && line.matchedPayment.voucher_number.toLowerCase().includes(q)) return true;
+    if (line.matchedReceipt?.payment_number && line.matchedReceipt.payment_number.toLowerCase().includes(q)) return true;
+
+    return false;
+  };
+
+  const filteredLines = useMemo(() => {
+    return statementLines.filter(line => {
+      let statusMatch = true;
+      if (activeFilter === 'all') {
+        statusMatch = true;
+      } else if (activeFilter === 'unmatched') {
+        statusMatch = line.status === 'unmatched' || line.status === 'partially_reconciled';
+      } else if (activeFilter === 'matched') {
+        statusMatch = line.status === 'matched' || line.status === 'recorded';
+      } else {
+        statusMatch = line.status === activeFilter;
+      }
+      if (!statusMatch) return false;
+
+      return matchesSearch(line, searchTerm);
+    });
+  }, [statementLines, activeFilter, searchTerm]);
 
   // Sorting function
   const handleSort = (key: string) => {
@@ -3503,42 +3589,62 @@ export function BankReconciliationEnhanced({
     setSortConfig({ key, direction });
   };
 
-  const sortedLines = [...filteredLines].sort((a, b) => {
-    if (!sortConfig) return 0;
+  const sortedLines = useMemo(() => {
+    return [...filteredLines].sort((a, b) => {
+      if (!sortConfig) {
+        if (a.date !== b.date) {
+          return b.date.localeCompare(a.date);
+        }
+        return a.id.localeCompare(b.id);
+      }
 
-    const { key, direction } = sortConfig;
-    let aValue: any = a[key as keyof StatementLine];
-    let bValue: any = b[key as keyof StatementLine];
+      const { key, direction } = sortConfig;
+      let aValue: any = a[key as keyof StatementLine];
+      let bValue: any = b[key as keyof StatementLine];
 
-    // Handle date sorting
-    if (key === 'date') {
-      aValue = new Date(aValue).getTime();
-      bValue = new Date(bValue).getTime();
-    }
+      // Handle date sorting
+      if (key === 'date') {
+        aValue = new Date(aValue).getTime();
+        bValue = new Date(bValue).getTime();
+      }
 
-    // Handle numeric sorting for debit/credit
-    if (key === 'debit' || key === 'credit') {
-      aValue = Number(aValue) || 0;
-      bValue = Number(bValue) || 0;
-    }
+      // Handle numeric sorting for debit/credit
+      if (key === 'debit' || key === 'credit') {
+        aValue = Number(aValue) || 0;
+        bValue = Number(bValue) || 0;
+      }
 
-    // Handle string sorting
-    if (typeof aValue === 'string') {
-      aValue = aValue.toLowerCase();
-      bValue = bValue.toLowerCase();
-    }
+      // Handle string sorting
+      if (typeof aValue === 'string') {
+        aValue = aValue.toLowerCase();
+        bValue = bValue.toLowerCase();
+      }
 
-    if (aValue < bValue) return direction === 'asc' ? -1 : 1;
-    if (aValue > bValue) return direction === 'asc' ? 1 : -1;
-    return 0;
-  });
+      if (aValue < bValue) return direction === 'asc' ? -1 : 1;
+      if (aValue > bValue) return direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [filteredLines, sortConfig]);
 
-  const stats = {
-    total: statementLines.length,
-    matched: statementLines.filter(l => l.status === 'matched' || l.status === 'recorded').length,
-    suggested: statementLines.filter(l => l.status === 'suggested').length,
-    unmatched: statementLines.filter(l => l.status === 'unmatched' || l.status === 'partially_reconciled').length,
-  };
+  const stats = useMemo(() => {
+    return {
+      total: statementLines.length,
+      matched: statementLines.filter(l => l.status === 'matched' || l.status === 'recorded').length,
+      suggested: statementLines.filter(l => l.status === 'suggested').length,
+      unmatched: statementLines.filter(l => l.status === 'unmatched' || l.status === 'partially_reconciled').length,
+    };
+  }, [statementLines]);
+
+  const totalFiltered = sortedLines.length;
+  const numPageSize = typeof pageSize === 'number' ? pageSize : totalFiltered || 1;
+  const totalPages = pageSize === 'all' ? 1 : Math.max(1, Math.ceil(totalFiltered / numPageSize));
+  const validCurrentPage = Math.min(currentPage, totalPages);
+
+  const paginatedLines = useMemo(() => {
+    if (pageSize === 'all') return sortedLines;
+    const start = (validCurrentPage - 1) * numPageSize;
+    return sortedLines.slice(start, start + numPageSize);
+  }, [sortedLines, validCurrentPage, pageSize, numPageSize]);
 
   const openEditModal = (line: StatementLine) => {
     setEditingLine(line);
@@ -3803,14 +3909,14 @@ export function BankReconciliationEnhanced({
         </div>
       </div>
 
-      {/* Compact Filter Bar */}
-      <div className="bg-white rounded border border-gray-200 p-2">
-        <div className="flex items-center gap-3 flex-wrap">
+      {/* Filter and Search Bar */}
+      <div className="bg-white rounded border border-gray-200 p-2.5 shadow-sm space-y-2">
+        <div className="flex items-center gap-2.5 flex-wrap">
           {/* Bank Account Selector */}
           <select name="bank" aria-label="Bank"
             value={selectedBank}
             onChange={(e) => { setSelectedBank(e.target.value); try { localStorage.setItem('bank_recon_selected_bank', e.target.value); } catch { /* Storage may be unavailable. */ } }}
-            className="px-3 py-1.5 border border-gray-300 rounded-md text-xs font-medium"
+            className="px-2.5 py-1.5 border border-gray-300 rounded-md text-xs font-medium bg-white text-gray-800 shadow-sm"
           >
             {bankAccounts.map(bank => (
               <option key={bank.id} value={bank.id}>
@@ -3819,21 +3925,94 @@ export function BankReconciliationEnhanced({
             ))}
           </select>
 
-          <div className="h-6 w-px bg-gray-300"></div>
+          <div className="h-5 w-px bg-gray-200 hidden sm:block"></div>
 
-          {/* Date range controlled by master filter at top */}
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <Calendar className="w-3 h-3" />
-            <span>{new Date(dateRange.start).toLocaleDateString('en-GB')} → {new Date(dateRange.end).toLocaleDateString('en-GB')}</span>
+          {/* Interactive Date Range Controls */}
+          <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-300 rounded-md px-2 py-1 text-xs">
+            <Calendar className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+            <span className="text-gray-500 font-medium text-[11px]">From</span>
+            <input
+              type="date"
+              name="bank_recon_start_date"
+              aria-label="Start Date"
+              value={toInputFormat(localStartDate)}
+              onChange={(e) => handleDateChange(e.target.value, localEndDate)}
+              className="px-1.5 py-0.5 border border-gray-200 rounded bg-white text-xs font-mono text-gray-800"
+              title="Filter from date"
+            />
+            <span className="text-gray-400 text-[11px]">to</span>
+            <input
+              type="date"
+              name="bank_recon_end_date"
+              aria-label="End Date"
+              value={toInputFormat(localEndDate)}
+              onChange={(e) => handleDateChange(localStartDate, e.target.value)}
+              className="px-1.5 py-0.5 border border-gray-200 rounded bg-white text-xs font-mono text-gray-800"
+              title="Filter to date"
+            />
           </div>
 
-          <div className="h-6 w-px bg-gray-300"></div>
+          <div className="h-5 w-px bg-gray-200 hidden sm:block"></div>
 
-          {/* Status Filter Pills */}
-          <div className="flex gap-1">
+          {/* Search Across Description, Reference, Amount, and Date */}
+          <div className="relative flex-1 min-w-[220px] max-w-md">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              name="bank_recon_search"
+              aria-label="Search Transactions"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search description, ref, amount (e.g. 767520), or date (01/10/2026)..."
+              className="w-full pl-8 pr-7 py-1.5 border border-gray-300 rounded-md text-xs placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                title="Clear search"
+                aria-label="Clear search"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          {/* Clear Filters Button */}
+          {(searchTerm || activeFilter !== 'all') && (
+            <button
+              type="button"
+              onClick={handleClearFilters}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-md font-medium transition-colors"
+              title="Reset search and status filter"
+              aria-label="Clear all filters"
+            >
+              <RotateCcw className="w-3 h-3 text-gray-500" />
+              Clear Filters
+            </button>
+          )}
+
+          {/* Auto Match Button */}
+          <button
+            type="button"
+            onClick={() => { void autoMatchTransactions(); }}
+            disabled={!selectedBank || autoMatching}
+            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-semibold shadow-sm whitespace-nowrap"
+            title="Match unlinked transactions to posted finance documents; ambiguous matches remain unlinked"
+            aria-label="Run bank transaction auto-match"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${autoMatching ? 'animate-spin' : ''}`} />
+            {autoMatching ? 'Matching…' : 'Auto-Match'}
+          </button>
+        </div>
+
+        {/* Row 2: Status Filter Pills with Accurate Counts */}
+        <div className="flex items-center justify-between gap-2 pt-1 border-t border-gray-100 flex-wrap">
+          <div className="flex gap-1.5">
             <button
               onClick={() => setActiveFilter('all')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 activeFilter === 'all'
                   ? 'bg-slate-700 text-white shadow-sm'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -3843,7 +4022,7 @@ export function BankReconciliationEnhanced({
             </button>
             <button
               onClick={() => setActiveFilter('matched')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 activeFilter === 'matched'
                   ? 'bg-green-600 text-white shadow-sm'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -3853,7 +4032,7 @@ export function BankReconciliationEnhanced({
             </button>
             <button
               onClick={() => setActiveFilter('suggested')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 activeFilter === 'suggested'
                   ? 'bg-yellow-600 text-white shadow-sm'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -3863,7 +4042,7 @@ export function BankReconciliationEnhanced({
             </button>
             <button
               onClick={() => setActiveFilter('unmatched')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 activeFilter === 'unmatched'
                   ? 'bg-red-600 text-white shadow-sm'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -3871,18 +4050,13 @@ export function BankReconciliationEnhanced({
             >
               ✕ Unmatched ({stats.unmatched})
             </button>
-            <button
-              type="button"
-              onClick={() => { void autoMatchTransactions(); }}
-              disabled={!selectedBank || autoMatching}
-              className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-semibold shadow-sm whitespace-nowrap"
-              title="Match unlinked transactions to posted finance documents; ambiguous matches remain unlinked"
-              aria-label="Run bank transaction auto-match"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${autoMatching ? 'animate-spin' : ''}`} />
-              {autoMatching ? 'Matching…' : 'Auto-Match'}
-            </button>
           </div>
+
+          {searchTerm && (
+            <div className="text-xs text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded font-medium">
+              Found {filteredLines.length} matching "{searchTerm}" in {activeFilter} view
+            </div>
+          )}
         </div>
       </div>
 
@@ -3908,9 +4082,9 @@ export function BankReconciliationEnhanced({
       ) : statementLines.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-lg border-2 border-dashed">
           <Landmark className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-          <h3 className="text-lg font-medium text-gray-600 mb-1">No Bank Transactions</h3>
+          <h3 className="text-lg font-medium text-gray-600 mb-1">No Bank Transactions in this Date Range</h3>
           <p className="text-sm text-gray-500 mb-4">
-            Upload a BCA PDF statement or Excel/CSV file to start reconciling
+            No transactions found between {formatDate(dateRange.start)} and {formatDate(dateRange.end)}. Adjust the date filter or upload a BCA statement.
           </p>
           {canManage && (
             <button
@@ -3923,10 +4097,26 @@ export function BankReconciliationEnhanced({
           )}
         </div>
       ) : filteredLines.length === 0 ? (
-        <div className="text-center py-12 bg-white rounded-lg border">
+        <div className="text-center py-12 bg-white rounded-lg border border-gray-200 p-6">
           <Landmark className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-          <h3 className="text-lg font-medium text-gray-600 mb-1">No Matching Transactions</h3>
-          <p className="text-sm text-gray-500">Change the reconciliation filter to view the loaded bank transactions.</p>
+          <h3 className="text-base font-semibold text-gray-800 mb-1">
+            {searchTerm ? 'No Matching Transactions' : `No ${activeFilter.charAt(0).toUpperCase() + activeFilter.slice(1)} Transactions`}
+          </h3>
+          <p className="text-xs text-gray-500 max-w-md mx-auto mb-4">
+            {searchTerm
+              ? `No transactions matched "${searchTerm}" with status "${activeFilter}" in the selected date range (${formatDate(dateRange.start)} - ${formatDate(dateRange.end)}).`
+              : `No transactions found with status "${activeFilter}" for ${selectedAccount?.bank_name || 'this bank'} in the selected date range.`}
+          </p>
+          {(searchTerm || activeFilter !== 'all') && (
+            <button
+              type="button"
+              onClick={handleClearFilters}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset Filters & Search
+            </button>
+          )}
         </div>
       ) : (
         <div className="bg-white border rounded-lg overflow-hidden">
@@ -3992,7 +4182,7 @@ export function BankReconciliationEnhanced({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {sortedLines.map(line => (
+              {paginatedLines.map(line => (
                 <Fragment key={line.id}>
                 <tr
                   id={`bank-statement-line-${line.id}`}
@@ -4222,6 +4412,65 @@ export function BankReconciliationEnhanced({
               </tr>
             </tbody>
           </table>
+
+          {/* Pagination Toolbar */}
+          <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-t border-gray-200 text-xs text-gray-600 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span>
+                Showing {totalFiltered === 0 ? 0 : (validCurrentPage - 1) * numPageSize + 1} to{' '}
+                {pageSize === 'all' ? totalFiltered : Math.min(validCurrentPage * numPageSize, totalFiltered)} of{' '}
+                <strong className="font-semibold text-gray-900">{totalFiltered}</strong> transactions
+                {searchTerm ? ` (filtered from ${statementLines.length} total)` : ''}
+              </span>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1.5">
+                <span>Rows per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    const val = e.target.value === 'all' ? 'all' : Number(e.target.value);
+                    setPageSize(val);
+                    setCurrentPage(1);
+                  }}
+                  className="px-2 py-0.5 border border-gray-300 rounded bg-white text-xs font-medium"
+                >
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={250}>250</option>
+                  <option value="all">All</option>
+                </select>
+              </div>
+              {pageSize !== 'all' && totalPages > 1 && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={validCurrentPage <= 1}
+                    className="p-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-40"
+                    title="Previous Page"
+                    aria-label="Previous Page"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="px-2 font-medium">
+                    Page {validCurrentPage} of {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={validCurrentPage >= totalPages}
+                    className="p-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-40"
+                    title="Next Page"
+                    aria-label="Next Page"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
