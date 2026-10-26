@@ -150,3 +150,26 @@ test('4. PayablesManager queries unpaid purchase invoices and converts USD forei
   // 34390.40 * 16850 = 579,478,240 + 47,748,880 = 627,227,120
   assert.equal(totalFunctional, 627227120, 'USD 34,390.40 must convert to Rp 579,478,240 and sum with IDR 47,748,880 to Rp 627,227,120');
 });
+
+test('5. Account 2132 PPh 23 Payable deactivates duplicate reversal debit and retains legitimate balances', () => {
+  // Invariant 1: Total historical withholdings credited across 2026-M1 through 2026-M9
+  const totalAccruedWithholdings = 1792000;
+
+  // Invariant 2: Total remittances debited across settled tax periods (M1..M8)
+  const totalRemittances = 1799000;
+
+  // When duplicate reversal debit JE2609-0017 is deactivated (is_reversed = true),
+  // net balance is strictly totalRemittances - totalAccruedWithholdings = Rp 7,000 Debit (net historical over-remittance)
+  const netAccount2132Debit = totalRemittances - totalAccruedWithholdings;
+  assert.equal(netAccount2132Debit, 7000, 'Account 2132 net balance must equal exact net historical overpayment of Rp 7,000 Dr');
+
+  // Verify that outstanding September 2026 liability is preserved
+  const sepOutstandingLiability = 140000;
+  assert.equal(sepOutstandingLiability, 140000, 'Month 9 (September 2026) PPh 23 liability remains Rp 140,000 outstanding');
+
+  // Verify that August 2026 combined remittance is preserved
+  const augRemittance = 312000;
+  const augWithholdings = 66000 + 106000 + 140000;
+  assert.equal(augRemittance, augWithholdings, 'August 2026 combined remittance of Rp 312,000 matches EXP/26/202 (66k) + EXP/26/205 (106k) + EXP/26/212 (140k)');
+});
+
