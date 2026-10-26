@@ -387,96 +387,24 @@ export default function PartyLedger() {
         });
       }
 
-      // 4. Customs broker ledgers (strictly if this supplier IS an import broker and has 2110 lines)
-      if (!isUsdSupplier) {
-        const brokerLinesQuery = supabase
-          .from('journal_entry_lines')
-          .select('id, entry_date:journal_entries!inner(entry_date), debit, credit, description, journal_entry_id, journal_entries!inner(reference_id, reference_number, entry_number, transaction_category, is_posted, is_reversed), chart_of_accounts!inner(code)')
-          .eq('supplier_id', selectedParty)
-          .eq('journal_entries.transaction_category', 'import_broker')
-          .eq('chart_of_accounts.code', '2110')
-          .eq('journal_entries.is_posted', true)
-          .eq('journal_entries.is_reversed', false);
-        const brokerLines = await dateRange(brokerLinesQuery, 'journal_entries.entry_date');
-        if (brokerLines.data) {
-          const brokerExpIds = Array.from(new Set(
-            brokerLines.data
-              .map((line: any) => {
-                const rawRef = line.journal_entries?.reference_number || '';
-                if (rawRef.startsWith('EXP-')) {
-                  const sub = rawRef.substring(4);
-                  if (isUuid(sub)) return sub;
-                }
-                if (isUuid(line.journal_entries?.reference_id)) {
-                  return line.journal_entries.reference_id;
-                }
-                return null;
-              })
-              .filter(Boolean)
-          )) as string[];
-
-          let brokerExpMap: Record<string, string> = {};
-          if (brokerExpIds.length > 0) {
-            const { data: bExps } = await supabase
-              .from('finance_expenses')
-              .select('id, voucher_number, invoice_number')
-              .in('id', brokerExpIds);
-            if (bExps) {
-              brokerExpMap = Object.fromEntries(
-                bExps.map((e: any) => [
-                  e.id,
-                  e.voucher_number || (!isUuid(e.invoice_number) ? e.invoice_number : '') || ''
-                ])
-              );
-            }
-          }
-
-          brokerLines.data.forEach((line: any) => {
-            const entryDate = line.entry_date?.entry_date || line.journal_entries?.entry_date;
-            const lineDebit = Number(line.debit || 0);
-            const lineCredit = Number(line.credit || 0);
-            const rawRef = line.journal_entries?.reference_number || '';
-            let brokerRef = rawRef;
-            if (rawRef.startsWith('EXP-')) {
-              const sub = rawRef.substring(4);
-              brokerRef = brokerExpMap[sub] || (!isUuid(sub) ? sub : (line.journal_entries?.entry_number || ''));
-            } else if (line.journal_entries?.reference_id && brokerExpMap[line.journal_entries.reference_id]) {
-              brokerRef = brokerExpMap[line.journal_entries.reference_id];
-            } else if (isUuid(rawRef)) {
-              brokerRef = brokerExpMap[rawRef] || line.journal_entries?.entry_number || '';
-            }
-
-            entries.push({
-              id: `${line.journal_entry_id}:${line.id}`,
-              entry_date: entryDate,
-              particulars: line.description || 'Customs Broker Invoice',
-              reference: brokerRef,
-              currency: 'IDR',
-              debit: lineDebit,
-              credit: lineCredit,
-              exchange_rate: 1,
-              functional_amount: lineDebit || lineCredit,
-              functional_debit: lineDebit,
-              functional_credit: lineCredit,
-              running_balance: 0,
-              type: lineCredit > 0 ? 'invoice' : 'payment',
-            });
-          });
-        }
-      }
-
-      // 5. Supplier Payment Vouchers (Supplier AP Debit)
+      // 4. Supplier Payment Vouchers (Supplier AP Debit)
       const { data: payments } = await dateRange(
         supabase
           .from('payment_vouchers')
-          .select('id, voucher_date, voucher_number, amount, description, transaction_currency, payment_currency, currency_code, exchange_rate')
+          .select('id, voucher_date, voucher_number, amount, description, transaction_currency, payment_currency, currency_code, exchange_rate, journal_entry_id')
           .eq('supplier_id', selectedParty)
           .eq('is_posted', true),
         'voucher_date',
       ).order('voucher_date');
 
+      const pvJeIds = new Set<string>();
+      const pvVoucherNos = new Set<string>();
+
       if (payments) {
         payments.forEach(pay => {
+          if (pay.journal_entry_id) pvJeIds.add(pay.journal_entry_id);
+          if (pay.voucher_number) pvVoucherNos.add(pay.voucher_number);
+
           const payCurr = pay.transaction_currency || (isUsdSupplier ? 'USD' : (pay.payment_currency || pay.currency_code || 'IDR'));
           const isUsd = isUsdSupplier || payCurr === 'USD';
           const primaryAmount = Number(pay.amount || 0);
@@ -506,6 +434,130 @@ export default function PartyLedger() {
             type: 'payment',
           });
         });
+      }
+
+      // 5. Customs broker bills & direct GL 2110 settlements (bank recon payments, historical repairs, adjustments)
+      // Any GL line on Account 2110 for this supplier that is not already captured by purchase invoices,
+      // non-import expense bills, or payment vouchers is included here to ensure ledger and GL agree.
+      if (!isUsdSupplier) {
+        const apLinesQuery = supabase
+          .from('journal_entry_lines')
+          .select('id, entry_date:journal_entries!inner(entry_date), debit, credit, description, journal_entry_id, journal_entries!inner(id, reference_id, reference_number, entry_number, source_module, transaction_category, is_posted, is_reversed), chart_of_accounts!inner(code)')
+          .eq('supplier_id', selectedParty)
+          .eq('chart_of_accounts.code', '2110')
+          .eq('journal_entries.is_posted', true)
+          .eq('journal_entries.is_reversed', false);
+        const apLines = await dateRange(apLinesQuery, 'journal_entries.entry_date');
+        if (apLines.data) {
+          const piIds = new Set<string>((invoices || []).map(p => p.id).filter(Boolean));
+          const piNos = new Set<string>((invoices || []).map(p => p.invoice_number).filter(Boolean));
+          const expIds = new Set<string>((effectiveExpenseBills || []).map(b => b.id).filter(Boolean));
+          const expVoucherNos = new Set<string>((effectiveExpenseBills || []).map(b => b.voucher_number).filter(Boolean));
+
+          interface ApJournalLine {
+            id: string;
+            debit: number | string | null;
+            credit: number | string | null;
+            description: string | null;
+            journal_entry_id: string;
+            entry_date?: { entry_date?: string };
+            journal_entries?: {
+              id: string;
+              entry_date?: string;
+              reference_id?: string | null;
+              reference_number?: string | null;
+              entry_number?: string | null;
+              source_module?: string | null;
+              transaction_category?: string | null;
+              is_posted: boolean;
+              is_reversed: boolean;
+            };
+          }
+
+          const otherApLines = (apLines.data as unknown as ApJournalLine[]).filter((line: ApJournalLine) => {
+            const je = line.journal_entries;
+            if (!je) return false;
+            if (pvJeIds.has(line.journal_entry_id) || pvJeIds.has(je.id) || (je.reference_number && pvVoucherNos.has(je.reference_number))) return false;
+            if ((je.reference_id && piIds.has(je.reference_id)) || (je.reference_number && piNos.has(je.reference_number))) return false;
+            const rawRef = je.reference_number || '';
+            const refExpId = rawRef.startsWith('EXP-') ? rawRef.substring(4) : '';
+            if ((je.reference_id && expIds.has(je.reference_id)) || (refExpId && expIds.has(refExpId)) || expVoucherNos.has(rawRef)) return false;
+            return true;
+          });
+
+          const candidateExpIds = Array.from(new Set(
+            otherApLines
+              .map((line: ApJournalLine) => {
+                const rawRef = line.journal_entries?.reference_number || '';
+                if (rawRef.startsWith('EXP-')) {
+                  const sub = rawRef.substring(4);
+                  if (isUuid(sub)) return sub;
+                }
+                if (line.journal_entries?.reference_id && isUuid(line.journal_entries.reference_id)) {
+                  return line.journal_entries.reference_id;
+                }
+                return null;
+              })
+              .filter(Boolean)
+          )) as string[];
+
+          let expVoucherMap: Record<string, string> = {};
+          if (candidateExpIds.length > 0) {
+            const { data: bExps } = await supabase
+              .from('finance_expenses')
+              .select('id, voucher_number, invoice_number')
+              .in('id', candidateExpIds);
+            if (bExps) {
+              expVoucherMap = Object.fromEntries(
+                bExps.map((e: { id: string; voucher_number?: string | null; invoice_number?: string | null }) => [
+                  e.id,
+                  e.voucher_number || (!isUuid(e.invoice_number) ? e.invoice_number : '') || ''
+                ])
+              );
+            }
+          }
+
+          otherApLines.forEach((line: ApJournalLine) => {
+            const entryDate = line.entry_date?.entry_date || line.journal_entries?.entry_date || '';
+            const lineDebit = Number(line.debit || 0);
+            const lineCredit = Number(line.credit || 0);
+            const rawRef = line.journal_entries?.reference_number || '';
+            const refId = line.journal_entries?.reference_id || '';
+            let lineRef = rawRef;
+
+            if (rawRef.startsWith('EXP-')) {
+              const sub = rawRef.substring(4);
+              lineRef = expVoucherMap[sub] || (!isUuid(sub) ? sub : (line.journal_entries?.entry_number || ''));
+            } else if (refId && expVoucherMap[refId]) {
+              lineRef = expVoucherMap[refId];
+            } else if (isUuid(rawRef)) {
+              lineRef = expVoucherMap[rawRef] || line.journal_entries?.entry_number || '';
+            } else if (!lineRef) {
+              lineRef = line.journal_entries?.entry_number || '';
+            }
+
+            const isCredit = lineCredit > 0;
+            const defaultParticulars = isCredit
+              ? (line.journal_entries?.transaction_category === 'import_broker' ? 'Customs Broker Invoice' : 'Supplier Invoice')
+              : (line.journal_entries?.source_module === 'expense_payment' ? 'Expense Bank Payment' : 'Supplier Payment');
+
+            entries.push({
+              id: `${line.journal_entry_id}:${line.id}`,
+              entry_date: entryDate,
+              particulars: line.description || defaultParticulars,
+              reference: lineRef,
+              currency: 'IDR',
+              debit: lineDebit,
+              credit: lineCredit,
+              exchange_rate: 1,
+              functional_amount: lineDebit || lineCredit,
+              functional_debit: lineDebit,
+              functional_credit: lineCredit,
+              running_balance: 0,
+              type: isCredit ? 'invoice' : 'payment',
+            });
+          });
+        }
       }
     } else if (partyType === 'staff') {
       // Staff ledger — one running account per staff member:
@@ -808,7 +860,7 @@ export default function PartyLedger() {
   const totalDebit = ledgerEntries.reduce((sum, e) => sum + e.debit, 0);
   const totalCredit = ledgerEntries.reduce((sum, e) => sum + e.credit, 0);
   const closingBalance = openingBalance + totalDebit - totalCredit;
-  const outstanding = Math.abs(closingBalance);
+  const _outstanding = Math.abs(closingBalance);
 
   const totalFunctionalDebit = ledgerEntries.reduce((sum, e) => sum + (e.functional_debit ?? (e.currency === 'USD' && e.exchange_rate ? e.debit * e.exchange_rate : e.debit)), 0);
   const totalFunctionalCredit = ledgerEntries.reduce((sum, e) => sum + (e.functional_credit ?? (e.currency === 'USD' && e.exchange_rate ? e.credit * e.exchange_rate : e.credit)), 0);
