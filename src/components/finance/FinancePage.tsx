@@ -51,7 +51,7 @@ export interface KPI {
 }
 
 interface FinancePageProps {
-  title: string;
+  title?: string;
   /** Optional subtitle rendered next to the title in TYPE_MUTED. */
   subtitle?: string;
   /** Primary action buttons rendered in the header (right side). */
@@ -62,6 +62,8 @@ interface FinancePageProps {
   toolbar?: ReactNode;
   /** Optional chip / quick-filter strip below the toolbar. */
   chips?: ReactNode;
+  /** Optional custom header layout (e.g. multi-row toolbars) */
+  customHeader?: ReactNode;
   /** Main content — usually a table. */
   children: ReactNode;
 }
@@ -74,26 +76,30 @@ const TINT_TEXT: Record<NonNullable<KPI['tint']>, string> = {
   info:    'text-blue-700',
 };
 
-export function FinancePage({ title, subtitle, actions, kpis, toolbar, chips, children }: FinancePageProps) {
+export function FinancePage({ title, subtitle, actions, kpis, toolbar, chips, customHeader, children }: FinancePageProps) {
   return (
     <div className="flex flex-col gap-2">
-      {/* Consolidated header toolbar: Title | Subtitle | Toolbar/Filters | Actions */}
-      <div className="flex min-h-[42px] flex-wrap items-center justify-between gap-3 px-3 py-1.5 bg-white border border-gray-200 rounded-lg">
-        <div className="flex items-center gap-2 shrink-0">
-          <h1 className="text-sm font-semibold text-gray-900 whitespace-nowrap">{title}</h1>
-          {subtitle && <span className="text-xs text-gray-500 hidden md:inline truncate">{subtitle}</span>}
-        </div>
-
-        {toolbar && (
-          <div className="flex flex-1 items-center gap-2 min-w-0 flex-wrap">
-            {toolbar}
+      {customHeader ? (
+        customHeader
+      ) : (
+        /* Consolidated header toolbar: Title | Subtitle | Toolbar/Filters | Actions */
+        <div className="flex min-h-[42px] flex-wrap items-center justify-between gap-3 px-3 py-1.5 bg-white border border-gray-200 rounded-lg">
+          <div className="flex items-center gap-2 shrink-0">
+            {title && <h1 className="text-sm font-semibold text-gray-900 whitespace-nowrap">{title}</h1>}
+            {subtitle && <span className="text-xs text-gray-500 hidden md:inline truncate">{subtitle}</span>}
           </div>
-        )}
 
-        {actions && (
-          <div className="flex shrink-0 items-center gap-2 ml-auto">{actions}</div>
-        )}
-      </div>
+          {toolbar && (
+            <div className="flex flex-1 items-center gap-2 min-w-0 flex-wrap">
+              {toolbar}
+            </div>
+          )}
+
+          {actions && (
+            <div className="flex shrink-0 items-center gap-2 ml-auto">{actions}</div>
+          )}
+        </div>
+      )}
 
       {/* KPI strip — only when kpis provided */}
       {kpis && kpis.length > 0 && (

@@ -566,6 +566,7 @@ export interface ExpenseTotalsInput {
   amount?: number | null;
   ppn_amount?: number | null;
   pph_amount?: number | null;
+  pph_treatment?: 'deduct' | 'add' | string | null;
   stamp_duty_amount?: number | null;
   bank_charges_amount?: number | null;
   expense_category?: string | null;
@@ -575,6 +576,7 @@ export interface ExpenseTotals {
   amount: number;
   ppnAmount: number;
   pphAmount: number;
+  pphTreatment: 'deduct' | 'add';
   stampDutyAmount: number;
   /** Additional bank charges included in the actual cash payment. */
   bankChargesAmount: number;
@@ -582,6 +584,8 @@ export interface ExpenseTotals {
   netPayable: number;
   /** Actual bank movement: net payable plus bank-owned charges. */
   settlementAmount: number;
+  /** Total cash outflow required (recipient payable + tax authority remittance). */
+  totalCashOutflow: number;
 }
 
 /**
@@ -592,17 +596,29 @@ export function calculateExpenseTotals(exp: ExpenseTotalsInput): ExpenseTotals {
   const amount = Number(exp.amount) || 0;
   const ppn = Number(exp.ppn_amount) || 0;
   const pph = Number(exp.pph_amount) || 0;
+  const treatment: 'deduct' | 'add' = exp.pph_treatment === 'add' ? 'add' : 'deduct';
   const stamp = Number(exp.stamp_duty_amount) || 0;
   const rawBank = Number(exp.bank_charges_amount) || 0;
   const bank = rawBank;
+
+  const netPayable = treatment === 'add'
+    ? amount + ppn + stamp + bank
+    : amount + ppn - pph + stamp + bank;
+  const settlementAmount = netPayable;
+  const totalCashOutflow = treatment === 'add'
+    ? amount + ppn + pph + stamp + bank
+    : amount + ppn + stamp + bank;
+
   return {
     amount,
     ppnAmount: ppn,
     pphAmount: pph,
+    pphTreatment: treatment,
     stampDutyAmount: stamp,
     bankChargesAmount: bank,
-    netPayable: amount + ppn - pph + stamp + bank,
-    settlementAmount: amount + ppn - pph + stamp + bank,
+    netPayable,
+    settlementAmount,
+    totalCashOutflow,
   };
 }
 

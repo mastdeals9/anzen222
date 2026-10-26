@@ -57,6 +57,29 @@ function PpnModeToggle({ value, onChange }: {
   );
 }
 
+// Compact PPH treatment toggle matching PpnModeToggle styling
+function PphTreatmentToggle({ value, onChange }: {
+  value: 'deduct' | 'add' | undefined;
+  onChange: (treatment: 'deduct' | 'add') => void;
+}) {
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-[9px] text-gray-400 font-medium whitespace-nowrap">PPH Treatment</span>
+      <select
+        name="pph_treatment"
+        aria-label="PPH Treatment"
+        value={value || 'deduct'}
+        onChange={(e) => onChange(e.target.value as 'deduct' | 'add')}
+        title="PPH Treatment: Deduct (-) or Add (+)"
+        className="h-6 px-1 text-[9px] font-semibold border border-gray-200 bg-white rounded-none cursor-pointer"
+      >
+        <option value="deduct">Deduct (-)</option>
+        <option value="add">Add (+)</option>
+      </select>
+    </div>
+  );
+}
+
 // Broker Invoice PPN % selector — Indonesian tax practice: 0 / 11 / 12 / Custom.
 // - 0/11/12: PPN Amount is auto-calculated from Invoice DPP × rate (read-only).
 // - Custom: user types both rate (optional) and PPN Amount manually.
@@ -187,6 +210,7 @@ interface FinanceExpense {
   ppn_rate?: number | null;
   pph_amount?: number | null;
   pph_code_id?: string | null;
+  pph_treatment?: 'deduct' | 'add' | null;
   stamp_duty_amount?: number | null;
   fixed_asset_account_id?: string | null;
   // Utility-only optional bank charges
@@ -683,6 +707,7 @@ export function ExpenseManager({
     ppn_rate: 11,
     pph_amount: 0,
     pph_code_id: '',
+    pph_treatment: 'deduct' as 'deduct' | 'add',
     stamp_duty_amount: 0,
     fixed_asset_account_id: '',
     // Task 5: Utility-only optional bank charges paid alongside the utility bill.
@@ -815,7 +840,13 @@ export function ExpenseManager({
           gross_salary: preservingHistoricalValues ? Number(formData.amount || 0) : calculation.gross_salary,
           pph21_amount: preservingHistoricalValues ? Number(formData.pph_amount || 0) : calculation.pph21_amount,
           outstanding_salary_advances: advanceApplied,
-          net_salary_payable: Math.max((preservingHistoricalValues ? Number(formData.amount || 0) : calculation.gross_salary) - advanceApplied - (preservingHistoricalValues ? Number(formData.pph_amount || 0) : calculation.pph21_amount) - calculation.bpjs_amount, 0),
+          net_salary_payable: Math.max(
+            (preservingHistoricalValues ? Number(formData.amount || 0) : calculation.gross_salary)
+              - advanceApplied
+              - (formData.pph_treatment === 'add' ? 0 : (preservingHistoricalValues ? Number(formData.pph_amount || 0) : calculation.pph21_amount))
+              - calculation.bpjs_amount,
+            0,
+          ),
         } : null);
         // Existing settlement links are persisted facts; new deductions require explicit advance selections.
         // Only explicitly selected advances can be settled.
@@ -838,25 +869,27 @@ export function ExpenseManager({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [formData.expense_category, formData.expense_date, formData.amount, selectedStaffId, taxCodes, editingExpense?.id, selectedSalaryAdvanceIds]);
+  }, [formData.expense_category, formData.expense_date, formData.amount, selectedStaffId, taxCodes, editingExpense?.id, selectedSalaryAdvanceIds, formData.pph_treatment]);
 
   // A deliberate PPh21 edit is a UI override, not a new payroll calculation.
   // Keep the canonical advances/BPJS result and update only the displayed
   // deduction/net so the panel immediately reflects the value that will save.
   useEffect(() => {
     if (formData.expense_category !== 'salary') return;
+    const isAdd = formData.pph_treatment === 'add';
+    const pphToDeduct = isAdd ? 0 : (Number(formData.pph_amount) || 0);
     setSalaryCalculation(current => current ? {
       ...current,
       pph21_amount: formData.pph_amount,
       net_salary_payable: Math.max(
         current.gross_salary
           - current.outstanding_salary_advances
-          - formData.pph_amount
+          - pphToDeduct
           - current.bpjs_amount,
         0,
       ),
     } : current);
-  }, [formData.expense_category, formData.pph_amount]);
+  }, [formData.expense_category, formData.pph_amount, formData.pph_treatment]);
 
   useEffect(() => {
     if (!viewingExpense || viewingExpense.expense_category !== 'salary') {
@@ -1715,6 +1748,7 @@ export function ExpenseManager({
         ppn_rate:               persistHeaderTax ? (formData.ppn_rate || 11) : 11,
         pph_amount:             persistHeaderTax ? (formData.pph_amount || 0) : 0,
         pph_code_id:            (persistHeaderTax && formData.pph_code_id) ? formData.pph_code_id : null,
+        pph_treatment:          formData.pph_treatment || 'deduct',
         stamp_duty_amount:      persistHeaderTax ? (formData.stamp_duty_amount || 0) : 0,
         fixed_asset_account_id: isFixedAsset ? (formData.fixed_asset_account_id || null) : null,
         bank_charges_amount:    Number(formData.bank_charges_amount ?? editingExpense?.bank_charges_amount ?? 0),
@@ -2167,6 +2201,7 @@ export function ExpenseManager({
       ppn_rate: expense.ppn_rate ?? 11,
       pph_amount: expense.pph_amount ?? 0,
       pph_code_id: expense.pph_code_id ?? '',
+      pph_treatment: (expense.pph_treatment === 'add' ? 'add' : 'deduct') as 'deduct' | 'add',
       stamp_duty_amount: expense.stamp_duty_amount ?? 0,
       fixed_asset_account_id: expense.fixed_asset_account_id ?? '',
       bank_charges_amount: expense.bank_charges_amount ?? 0,
@@ -2504,6 +2539,7 @@ export function ExpenseManager({
       dpp_amount: 0,
       ppn_rate: 11,
       pph_amount: 0,
+      pph_treatment: 'deduct',
       pph_code_id: '',
       stamp_duty_amount: 0,
       fixed_asset_account_id: '',
@@ -4110,13 +4146,27 @@ export function ExpenseManager({
                           );
                         })}
                       </div>}
-                      <div className="mt-2 grid grid-cols-5 gap-2 border-t border-amber-200 pt-2 text-xs">
-                        <div><span className="text-amber-700">Gross Salary</span><div className="font-mono font-semibold text-amber-950">{formatCurrency(salaryCalculation.gross_salary, expenseFormCurrency)}</div></div>
-                        <div><span className="text-amber-700">Less Advance</span><div className="font-mono font-semibold text-amber-950">−{formatCurrency(salaryCalculation.outstanding_salary_advances, expenseFormCurrency)}</div></div>
-                        <div><span className="text-amber-700">Less PPh21</span><div className="font-mono font-semibold text-amber-950">−{formatCurrency(salaryCalculation.pph21_amount, expenseFormCurrency)}</div></div>
-                        <div><span className="text-amber-700">Less BPJS</span><div className="font-mono font-semibold text-amber-950">−{formatCurrency(salaryCalculation.bpjs_amount, expenseFormCurrency)}</div></div>
-                        <div><span className="text-amber-700">Net Payable</span><div className="font-mono font-bold text-emerald-800">{formatCurrency(salaryCalculation.net_salary_payable, expenseFormCurrency)}</div></div>
-                      </div>
+                      {(() => {
+                        const isAdd = formData.pph_treatment === 'add';
+                        const pph21Val = Number(formData.pph_amount ?? salaryCalculation.pph21_amount ?? 0);
+                        const netPayable = salaryCalculation.net_salary_payable;
+                        const totalCashOutflow = netPayable + pph21Val + Number(salaryCalculation.outstanding_salary_advances || 0);
+                        return (
+                          <div className="mt-2 grid grid-cols-2 sm:grid-cols-6 gap-2 border-t border-amber-200 pt-2 text-xs">
+                            <div><span className="text-amber-700">Gross Salary</span><div className="font-mono font-semibold text-amber-950">{formatCurrency(salaryCalculation.gross_salary, expenseFormCurrency)}</div></div>
+                            <div><span className="text-amber-700">Less Advance</span><div className="font-mono font-semibold text-amber-950">−{formatCurrency(salaryCalculation.outstanding_salary_advances, expenseFormCurrency)}</div></div>
+                            <div>
+                              <span className="text-amber-700">{isAdd ? 'PPh 21 (Add)' : 'PPh 21 (Deduct)'}</span>
+                              <div className={`font-mono font-semibold ${isAdd ? 'text-blue-900' : 'text-amber-950'}`}>
+                                {isAdd ? '+' : '−'}{formatCurrency(pph21Val, expenseFormCurrency)}
+                              </div>
+                            </div>
+                            <div><span className="text-amber-700">Less BPJS</span><div className="font-mono font-semibold text-amber-950">−{formatCurrency(salaryCalculation.bpjs_amount, expenseFormCurrency)}</div></div>
+                            <div><span className="text-amber-700 font-bold">Net Payable (Employee)</span><div className="font-mono font-bold text-emerald-800">{formatCurrency(netPayable, expenseFormCurrency)}</div></div>
+                            <div><span className="text-amber-700 font-bold">Total Cash Outflow</span><div className="font-mono font-bold text-purple-900">{formatCurrency(totalCashOutflow, expenseFormCurrency)}</div></div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
 
@@ -4253,7 +4303,16 @@ export function ExpenseManager({
                       </>
                     )}
                     {supportsPph && (
-                      <SapField label={category?.taxBehavior === 'salary' ? 'PPh 21' : 'PPh Withheld'} span={3}>
+                      <SapField
+                        label={category?.taxBehavior === 'salary' ? 'PPh 21' : 'PPh Withheld'}
+                        span={3}
+                        right={
+                          <PphTreatmentToggle
+                            value={formData.pph_treatment}
+                            onChange={(treatment) => setFormData(prev => ({ ...prev, pph_treatment: treatment }))}
+                          />
+                        }
+                      >
                         <MoneyInput value={formData.pph_amount} placeholder="0.00"
                           onChange={(v) => setFormData(prev => ({
                             ...prev,
@@ -4809,6 +4868,9 @@ export function ExpenseManager({
                     const bc = totals.bankChargesAmount;
                     const payable = totals.netPayable;
                     const settlementAmount = totals.settlementAmount;
+                    const isAdd = formData.pph_treatment === 'add';
+                    const pphAmount = Number(formData.pph_amount || 0);
+                    const totalCashOutflow = totals.totalCashOutflow;
                     const alreadyPaid = editingBankLines.reduce(
                       (sum, line) => sum + Number(line.allocation_amount ?? line.debit_amount ?? line.credit_amount ?? 0),
                       0,
@@ -4820,9 +4882,9 @@ export function ExpenseManager({
                     });
                     type FormulaCell = { label: string; value: number; valueColor: string; op?: string; show: boolean };
                     const rawCells: Array<{ label: string; value: number; valueColor: string; isDeduction?: boolean; show: boolean }> = [
-                      { label: 'Invoice Amount', value: formData.amount || 0, valueColor: 'text-gray-900', show: true },
+                      { label: formData.expense_category === 'salary' ? 'Gross Salary' : 'Invoice Amount', value: formData.amount || 0, valueColor: 'text-gray-900', show: true },
                       { label: 'PPN', value: formData.ppn_amount || 0, valueColor: 'text-blue-700', show: (formData.ppn_amount || 0) > 0 },
-                      { label: 'PPh Withheld', value: formData.pph_amount || 0, valueColor: 'text-orange-700', isDeduction: true, show: (formData.pph_amount || 0) > 0 },
+                      { label: 'PPh Withheld', value: pphAmount, valueColor: 'text-orange-700', isDeduction: true, show: !isAdd && pphAmount > 0 },
                       { label: 'Stamp Duty', value: formData.stamp_duty_amount || 0, valueColor: 'text-gray-900', show: (formData.stamp_duty_amount || 0) > 0 },
                       { label: 'Bank Charges', value: bc, valueColor: 'text-gray-900', show: bc > 0 },
                     ].filter(c => c.show);
@@ -4849,9 +4911,19 @@ export function ExpenseManager({
                           <span className="text-[9px] font-bold text-emerald-700 uppercase tracking-wide">NET PAYABLE</span>
                           <span className="text-xs font-bold font-mono text-emerald-900 mt-0.5">{fmt(payable)}</span>
                         </div>
+                        {pphAmount > 0 && (
+                          <div className="flex flex-col justify-center px-2.5 py-1 bg-orange-50 border-l border-orange-200 min-w-[105px]">
+                            <span className="text-[9px] font-bold text-orange-700 uppercase tracking-wide">PPH {isAdd ? 'ADD (+)' : 'DEDUCT (-)'}</span>
+                            <span className="text-xs font-bold font-mono text-orange-900 mt-0.5">{fmt(pphAmount)}</span>
+                          </div>
+                        )}
+                        <div className="flex flex-col justify-center px-2.5 py-1 bg-purple-50 border-l border-purple-200 min-w-[115px]">
+                          <span className="text-[9px] font-bold text-purple-700 uppercase tracking-wide">TOTAL CASH OUTFLOW</span>
+                          <span className="text-xs font-bold font-mono text-purple-900 mt-0.5">{fmt(totalCashOutflow)}</span>
+                        </div>
                         {bc > 0 && (
                           <div className="flex flex-col justify-center px-2.5 py-1 bg-blue-50 border-l-2 border-blue-400 min-w-[110px]">
-                            <span className="text-[9px] font-bold text-blue-700 uppercase tracking-wide">ACTUAL BANK SETTLEMENT</span>
+                            <span className="text-[9px] font-bold text-blue-700 uppercase tracking-wide">BANK SETTLEMENT</span>
                             <span className="text-xs font-bold font-mono text-blue-900 mt-0.5">{fmt(settlementAmount)}</span>
                           </div>
                         )}
@@ -5222,10 +5294,13 @@ export function ExpenseManager({
         // Tax rows (non-broker)
         const taxRows: Array<{ label: string; value: number; tint: string }> = [];
         if (!isBroker) {
+          const isAdd = viewingExpense.pph_treatment === 'add';
           const pphCode = viewingExpense.pph_code_id ? taxCodes.find(t => t.id === viewingExpense.pph_code_id) : null;
-          const pphLabel = pphCode ? `PPh Withheld · ${pphCode.tax_type}${pphCode.rate ? ` @ ${pphCode.rate}%` : ''}` : 'PPh Withheld';
+          const pphLabel = pphCode
+            ? `${isAdd ? 'PPh (Add-on)' : 'PPh Withheld'} · ${pphCode.tax_type}${pphCode.rate ? ` @ ${pphCode.rate}%` : ''}`
+            : (isAdd ? 'PPh (Add-on)' : 'PPh Withheld');
           if ((viewingExpense.ppn_amount || 0) > 0) taxRows.push({ label: 'PPN', value: viewingExpense.ppn_amount || 0, tint: 'text-blue-700' });
-          if ((viewingExpense.pph_amount || 0) > 0) taxRows.push({ label: pphLabel, value: -(viewingExpense.pph_amount || 0), tint: 'text-orange-700' });
+          if ((viewingExpense.pph_amount || 0) > 0) taxRows.push({ label: pphLabel, value: isAdd ? (viewingExpense.pph_amount || 0) : -(viewingExpense.pph_amount || 0), tint: 'text-orange-700' });
           if ((viewingExpense.stamp_duty_amount || 0) > 0) taxRows.push({ label: 'Stamp Duty', value: viewingExpense.stamp_duty_amount || 0, tint: 'text-gray-700' });
           if ((viewingExpense.bank_charges_amount || 0) > 0) taxRows.push({ label: 'Bank Charges', value: viewingExpense.bank_charges_amount || 0, tint: 'text-gray-700' });
           if ((viewingExpense.pib_bm_amount || 0) > 0) taxRows.push({ label: 'Import Duty (BM)', value: viewingExpense.pib_bm_amount || 0, tint: 'text-gray-700' });

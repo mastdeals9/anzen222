@@ -508,113 +508,126 @@ export function BpjsRegisterManager({ canManage }: Props) {
 
   return (
     <FinancePage
-      title="BPJS Register"
-      subtitle="BPJS Ketenagakerjaan Monthly Contributions & Bank Reconciliation (PT Avira Parama Farma — NPP: 26719331)"
-      actions={(
-        <div className="flex items-center gap-2 flex-wrap">
-          <FinanceButton variant="secondary" onClick={handleExportExcel} disabled={!register || items.length === 0}>
-            <Download className="w-3.5 h-3.5" /> Export Excel
-          </FinanceButton>
-
-          {register && register.status === 'draft' && canManage && (
-            <FinanceButton variant="secondary" onClick={handleApproveRegister}>
-              <Check className="w-3.5 h-3.5" /> Review & Approve
-            </FinanceButton>
-          )}
-
-          {register && register.status === 'approved' && canManage && (
-            <FinanceButton variant="primary" onClick={handlePostRegister}>
-              <FileText className="w-3.5 h-3.5" /> Post Accounting Entry
-            </FinanceButton>
-          )}
-
-          {register && (register.status === 'posted' || (register.status === 'approved' && !register.journal_entry_id)) && canManage && (
-            <FinanceButton variant="primary" onClick={openBankReconciliationModal}>
-              <Link2 className="w-3.5 h-3.5" /> Link Bank Payment
-            </FinanceButton>
-          )}
-
-          {register && (register.status === 'posted' || register.status === 'reconciled') && canManage && (
-            <FinanceButton variant="secondary" onClick={handleReverseRegister} className="!text-red-700 hover:!bg-red-50">
-              <RefreshCw className="w-3.5 h-3.5" /> Reversal
-            </FinanceButton>
-          )}
-
-          <FinanceButton variant="primary" onClick={handleGenerateRegister}>
-            <RefreshCw className="w-3.5 h-3.5" /> {register ? 'Recalculate Draft' : 'Generate Register'}
-          </FinanceButton>
-        </div>
-      )}
-      toolbar={(
-        <div className="flex items-center justify-between w-full gap-4 flex-wrap">
-          {/* Period selector */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-gray-700">Period:</span>
-            <select
-              value={selectedMonth}
-              onChange={e => setSelectedMonth(Number(e.target.value))}
-              className="h-7 px-2 text-xs border border-gray-300 rounded font-medium bg-white"
-            >
-              {MONTH_NAMES.map((name, idx) => (
-                <option key={name} value={idx + 1}>{name}</option>
-              ))}
-            </select>
-            <select
-              value={selectedYear}
-              onChange={e => setSelectedYear(Number(e.target.value))}
-              className="h-7 px-2 text-xs border border-gray-300 rounded font-medium bg-white"
-            >
-              {[2024, 2025, 2026, 2027].map(y => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
-
-            {register && (
-              <FinanceBadge
-                status={
-                  register.status === 'reconciled' ? 'approved' :
-                  register.status === 'posted' ? 'posted' :
-                  register.status === 'approved' ? 'approved' :
-                  register.status === 'cancelled' ? 'cancelled' : 'draft'
-                }
-              >
-                {register.status.toUpperCase()}
-              </FinanceBadge>
-            )}
-
-            {register && (
-              <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${
-                register.payment_status === 'paid' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                register.payment_status === 'partially_paid' ? 'bg-amber-50 text-amber-800 border-amber-200' :
-                'bg-gray-100 text-gray-700 border-gray-200'
-              }`}>
-                {register.payment_status === 'paid' ? 'PAID' :
-                 register.payment_status === 'partially_paid' ? 'PARTIALLY PAID' : 'UNPAID'}
+      customHeader={(
+        <div className="bg-white border border-gray-200 rounded-lg px-3.5 py-3 sm:px-4 sm:py-3.5 flex flex-col gap-2.5">
+          {/* Row 1 — Page title and period controls */}
+          <div className="flex flex-wrap items-center justify-between gap-3 min-h-[34px]">
+            {/* Left: BPJS Register title and subtitle on one compact line */}
+            <div className="flex items-center gap-2 min-w-0">
+              <h1 className="text-sm font-semibold text-gray-900 whitespace-nowrap">BPJS Register</h1>
+              <span className="text-xs text-gray-500 truncate hidden lg:inline">
+                BPJS Ketenagakerjaan Monthly Contributions &amp; Bank Reconciliation (PT Avira Parama Farma — NPP: 26719331)
               </span>
-            )}
+            </div>
+
+            {/* Right: Period month selector, year selector, and Draft/Unpaid status badges */}
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
+              <span className="text-xs font-semibold text-gray-700">Period:</span>
+              <select
+                value={selectedMonth}
+                onChange={e => setSelectedMonth(Number(e.target.value))}
+                className="h-[34px] px-2.5 text-xs border border-gray-300 rounded font-medium bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                {MONTH_NAMES.map((name, idx) => (
+                  <option key={name} value={idx + 1}>{name}</option>
+                ))}
+              </select>
+              <select
+                value={selectedYear}
+                onChange={e => setSelectedYear(Number(e.target.value))}
+                className="h-[34px] px-2.5 text-xs border border-gray-300 rounded font-medium bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                {[2024, 2025, 2026, 2027].map(y => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+
+              {register && (
+                <FinanceBadge
+                  status={
+                    register.status === 'reconciled' ? 'approved' :
+                    register.status === 'posted' ? 'posted' :
+                    register.status === 'approved' ? 'approved' :
+                    register.status === 'cancelled' ? 'cancelled' : 'draft'
+                  }
+                  className="!h-[30px] !text-xs !px-2.5 !py-0 flex items-center"
+                >
+                  {register.status.toUpperCase()}
+                </FinanceBadge>
+              )}
+
+              {register && (
+                <span className={`text-[11px] font-semibold px-2.5 h-[30px] inline-flex items-center rounded-full border ${
+                  register.payment_status === 'paid' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                  register.payment_status === 'partially_paid' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                  'bg-gray-100 text-gray-700 border-gray-200'
+                }`}>
+                  {register.payment_status === 'paid' ? 'PAID' :
+                   register.payment_status === 'partially_paid' ? 'PARTIALLY PAID' : 'UNPAID'}
+                </span>
+              )}
+            </div>
           </div>
 
-          {/* Filters */}
-          <div className="flex items-center gap-2 ml-auto">
-            <select
-              value={departmentFilter}
-              onChange={e => setDepartmentFilter(e.target.value)}
-              className="h-7 px-2 text-xs border border-gray-300 rounded bg-white"
-            >
-              <option value="all">All Departments</option>
-              {departments.map(d => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
+          {/* Row 2 — Filters and actions */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2.5 border-t border-gray-100">
+            {/* Left: Department dropdown and staff/KPJ search field */}
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              <select
+                value={departmentFilter}
+                onChange={e => setDepartmentFilter(e.target.value)}
+                className="h-[34px] px-2.5 text-xs border border-gray-300 rounded bg-white min-w-[140px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="all">All Departments</option>
+                {departments.map(d => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
 
-            <div className="relative w-52">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400" />
-              <input
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                placeholder="Search staff / KPJ..."
-                className="w-full h-7 pl-7 pr-2 text-xs border border-gray-300 rounded"
-              />
+              <div className="relative w-52 sm:w-64">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                <input
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  placeholder="Search staff / KPJ..."
+                  className="w-full h-[34px] pl-8 pr-2.5 text-xs border border-gray-300 rounded bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+
+            {/* Right: Export Excel, Review & Approve, and Recalculate Draft buttons */}
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
+              <FinanceButton variant="secondary" onClick={handleExportExcel} disabled={!register || items.length === 0} className="!h-[34px]">
+                <Download className="w-3.5 h-3.5" /> Export Excel
+              </FinanceButton>
+
+              {register && register.status === 'draft' && canManage && (
+                <FinanceButton variant="secondary" onClick={handleApproveRegister} className="!h-[34px]">
+                  <Check className="w-3.5 h-3.5" /> Review &amp; Approve
+                </FinanceButton>
+              )}
+
+              {register && register.status === 'approved' && canManage && (
+                <FinanceButton variant="primary" onClick={handlePostRegister} className="!h-[34px]">
+                  <FileText className="w-3.5 h-3.5" /> Post Accounting Entry
+                </FinanceButton>
+              )}
+
+              {register && (register.status === 'posted' || (register.status === 'approved' && !register.journal_entry_id)) && canManage && (
+                <FinanceButton variant="primary" onClick={openBankReconciliationModal} className="!h-[34px]">
+                  <Link2 className="w-3.5 h-3.5" /> Link Bank Payment
+                </FinanceButton>
+              )}
+
+              {register && (register.status === 'posted' || register.status === 'reconciled') && canManage && (
+                <FinanceButton variant="secondary" onClick={handleReverseRegister} className="!h-[34px] !text-red-700 hover:!bg-red-50">
+                  <RefreshCw className="w-3.5 h-3.5" /> Reversal
+                </FinanceButton>
+              )}
+
+              <FinanceButton variant="primary" onClick={handleGenerateRegister} className="!h-[34px]">
+                <RefreshCw className="w-3.5 h-3.5" /> {register ? 'Recalculate Draft' : 'Generate Register'}
+              </FinanceButton>
             </div>
           </div>
         </div>
